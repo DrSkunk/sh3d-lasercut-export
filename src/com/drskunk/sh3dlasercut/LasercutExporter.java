@@ -224,35 +224,66 @@ public final class LasercutExporter {
 
     // ---- layout + write ------------------------------------------------------
 
-    private void writeSvg(File outputFile, Map<Wall, WallPiece> pieces, FloorPiece floor) throws IOException {
-        SVGWriter svg = new SVGWriter(options.svgStrokeWidth, options.cutStrokeColor);
+    private LayoutResult composeLayout(Map<Wall, WallPiece> pieces, FloorPiece floor) {
         double spacing = options.layoutSpacing;
-        double cursorX = 0;
         double cursorY = 0;
+        double maxW = 0;
 
-        double fh = floor.bounds[3] - floor.bounds[1];
-        double fOffX = cursorX - floor.bounds[0];
-        double fOffY = cursorY - floor.bounds[1];
-        svg.addPolygon(floor.outline, fOffX, fOffY);
+        LayoutResult result = new LayoutResult();
+
+        // Floor: outline + slot rectangles.
+        double fOffX = -floor.bounds[0];
+        double fOffY = -floor.bounds[1];
+        result.shapes.add(translated(floor.outline, fOffX, fOffY));
         for (double[][] slot : floor.slots) {
-            svg.addPolygon(slot, fOffX, fOffY);
+            result.shapes.add(translated(asPolygon(slot), fOffX, fOffY));
         }
-        svg.addLabel("FLOOR", cursorX + 4, cursorY + 8, 6);
+        double fw = floor.bounds[2] - floor.bounds[0];
+        double fh = floor.bounds[3] - floor.bounds[1];
+        if (fw > maxW) maxW = fw;
+        result.labels.add(new LayoutResult.Label("FLOOR", 4, 8, 6));
+        cursorY = fh + spacing;
 
-        cursorY += fh + spacing;
-
+        // Walls: stacked vertically.
         for (WallPiece piece : pieces.values()) {
             double[] b = piece.bounds();
-            double pieceMinX = b[0];
-            double pieceMinY = b[1];
-            double pieceH = b[3] - b[1];
-            double offX = cursorX - pieceMinX;
-            double offY = cursorY - pieceMinY;
-            svg.addPolygon(piece.outline(), offX, offY);
-            svg.addLabel(piece.label, cursorX + 2, cursorY + 8, 6);
-            cursorY += pieceH + spacing;
+            double offX = -b[0];
+            double offY = cursorY - b[1];
+            result.shapes.add(translated(piece.outline(), offX, offY));
+            double pw = b[2] - b[0];
+            double ph = b[3] - b[1];
+            if (pw > maxW) maxW = pw;
+            result.labels.add(new LayoutResult.Label(piece.label, 2, cursorY + 8, 6));
+            cursorY += ph + spacing;
         }
 
+        result.width = maxW;
+        result.height = Math.max(0, cursorY - spacing);
+        return result;
+    }
+
+    private void writeSvg(File outputFile, LayoutResult layout) throws IOException {
+        SVGWriter svg = new SVGWriter(options.svgStrokeWidth, options.cutStrokeColor);
+        for (List<double[]> shape : layout.shapes) {
+            svg.addPolygon(shape, 0, 0);
+        }
+        for (LayoutResult.Label label : layout.labels) {
+            svg.addLabel(label.text, label.x, label.y, label.size);
+        }
         svg.write(outputFile);
+    }
+
+    private static List<double[]> translated(List<double[]> pts, double dx, double dy) {
+        List<double[]> r = new ArrayList<>(pts.size());
+        for (double[] p : pts) {
+            r.add(new double[] { p[0] + dx, p[1] + dy });
+        }
+        return r;
+    }
+
+    private static List<double[]> asPolygon(double[][] pts) {
+        List<double[]> r = new ArrayList<>(pts.length);
+        for (double[] p : pts) r.add(p);
+        return r;
     }
 }

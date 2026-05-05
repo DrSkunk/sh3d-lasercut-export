@@ -33,8 +33,7 @@ public final class LasercutExportAction extends PluginAction {
         Component parent = findParentComponent();
 
         Home home = plugin.getHome();
-        ModelMetrics metrics = LasercutExporter.computeMetrics(home);
-        ExportOptions options = ExportOptionsPanel.showDialog(parent, lastOptions, metrics);
+        ExportOptions options = ExportOptionsPanel.showDialog(parent, home, lastOptions);
         if (options == null) return;
         lastOptions = options;
 
