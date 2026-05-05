@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="sh3d-lasercut-export" default="package" basedir=".">
+
+    <!-- Path to a SweetHome3D.jar (or the application jar bundled with the
+         desktop install). Override on the command line:
+             ant -Dsh3d.jar=/path/to/SweetHome3D.jar
+         or drop the jar into the lib/ folder. -->
+    <property name="sh3d.jar" location="lib/SweetHome3D.jar"/>
+
+    <property name="src.dir"     value="src"/>
+    <property name="build.dir"   value="build/classes"/>
+    <property name="dist.dir"    value="dist"/>
+    <property name="plugin.name" value="LasercutExport"/>
+
+    <target name="-check-sdk">
+        <available file="${sh3d.jar}" property="sh3d.jar.available"/>
+        <fail unless="sh3d.jar.available">
+SweetHome3D.jar was not found at:
+  ${sh3d.jar}
+
+Either drop the jar into lib/ or run with -Dsh3d.jar=/path/to/SweetHome3D.jar
+On macOS the jar typically lives inside the app bundle, e.g.:
+  /Applications/Sweet Home 3D.app/Contents/Java/SweetHome3D.jar
+        </fail>
+    </target>
+
+    <target name="clean">
+        <delete dir="build"/>
+        <delete dir="${dist.dir}"/>
+    </target>
+
+    <target name="compile" depends="-check-sdk">
+        <mkdir dir="${build.dir}"/>
+        <javac srcdir="${src.dir}"
+               destdir="${build.dir}"
+               source="1.8"
+               target="1.8"
+               encoding="UTF-8"
+               includeantruntime="false"
+               debug="true">
+            <classpath>
+                <pathelement location="${sh3d.jar}"/>
+            </classpath>
+        </javac>
+    </target>
+
+    <target name="package" depends="compile">
+        <mkdir dir="${dist.dir}"/>
+        <jar destfile="${dist.dir}/${plugin.name}.sh3p">
+            <fileset dir="${build.dir}"/>
+            <fileset dir="${src.dir}" includes="ApplicationPlugin.properties"/>
+        </jar>
+        <echo>Built ${dist.dir}/${plugin.name}.sh3p</echo>
+    </target>
+</project>

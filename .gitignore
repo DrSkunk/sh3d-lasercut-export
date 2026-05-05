@@ -1,0 +1,30 @@
+# Build output
+build/
+dist/
+*.class
+*.jar
+*.sh3p
+
+# Sweet Home 3D SDK jar — vendor-supplied, do not commit
+lib/SweetHome3D.jar
+lib/*.jar
+
+# IDE / editor
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+nbproject/private/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code per-user settings
+.claude/settings.local.json
