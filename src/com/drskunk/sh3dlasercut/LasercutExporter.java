@@ -1,6 +1,7 @@
 package com.drskunk.sh3dlasercut;
 
 import com.eteks.sweethome3d.model.Home;
+import com.eteks.sweethome3d.model.HomePieceOfFurniture;
 import com.eteks.sweethome3d.model.Level;
 import com.eteks.sweethome3d.model.Wall;
 
@@ -138,7 +139,90 @@ public final class LasercutExporter {
             }
         }
 
-        return new WallPiece(length, height, thickness, bottomTabs, leftTabs, rightTabs, "W" + index);
+        // Door / window cutouts (in scaled wall-local coords).
+        List<double[]> cutouts = findCutouts(wall, sf, length, height);
+
+        // Drop bottom tabs that sit underneath a doorway — otherwise the tab
+        // would be a detached strip dangling in the opening.
+        bottomTabs = filterBottomTabsByCutouts(bottomTabs, cutouts);
+
+        return new WallPiece(length, height, thickness, bottomTabs, leftTabs, rightTabs,
+                cutouts, "W" + index);
+    }
+
+    private List<double[]> findCutouts(Wall wall, double sf, double scaledLength, double scaledHeight) {
+        List<double[]> cutouts = new ArrayList<>();
+        if (home.getFurniture() == null) return cutouts;
+
+        double sxCm = wall.getXStart();
+        double syCm = wall.getYStart();
+        double exCm = wall.getXEnd();
+        double eyCm = wall.getYEnd();
+        double Lcm = Math.hypot(exCm - sxCm, eyCm - syCm);
+        if (Lcm <= 0) return cutouts;
+        double ux = (exCm - sxCm) / Lcm;
+        double uy = (eyCm - syCm) / Lcm;
+        // Tolerate pieces sitting up to 1.5× the wall thickness off-axis
+        // (some doors have decorative frames slightly wider than the wall).
+        double perpToleranceCm = wall.getThickness() * 1.5 + 5.0;
+
+        Level wallLevel = wall.getLevel();
+        for (HomePieceOfFurniture p : home.getFurniture()) {
+            if (!p.isDoorOrWindow()) continue;
+            if (wallLevel != null && p.getLevel() != null && p.getLevel() != wallLevel) continue;
+            if (wallLevel == null && targetLevel != null && p.getLevel() != targetLevel) continue;
+
+            // Project center to wall axis. Reject if not roughly on this wall.
+            double cdx = p.getX() - sxCm;
+            double cdy = p.getY() - syCm;
+            double centerAlongCm = cdx * ux + cdy * uy;
+            double centerPerpCm  = -cdx * uy + cdy * ux;
+            if (centerAlongCm < -1 || centerAlongCm > Lcm + 1) continue;
+            if (Math.abs(centerPerpCm) > perpToleranceCm) continue;
+
+            // Use the piece's true rotated footprint to derive the along-wall span.
+            float[][] corners = p.getPoints();
+            if (corners == null || corners.length == 0) continue;
+            double minAlongCm = Double.POSITIVE_INFINITY;
+            double maxAlongCm = Double.NEGATIVE_INFINITY;
+            for (float[] corner : corners) {
+                double a = (corner[0] - sxCm) * ux + (corner[1] - syCm) * uy;
+                if (a < minAlongCm) minAlongCm = a;
+                if (a > maxAlongCm) maxAlongCm = a;
+            }
+
+            double xMin = minAlongCm * CM_TO_MM * sf;
+            double xMax = maxAlongCm * CM_TO_MM * sf;
+            double yMin = p.getElevation() * CM_TO_MM * sf;
+            double yMax = (p.getElevation() + p.getHeight()) * CM_TO_MM * sf;
+
+            // Clamp to wall bounds.
+            if (xMin < 0) xMin = 0;
+            if (xMax > scaledLength) xMax = scaledLength;
+            if (yMin < 0) yMin = 0;
+            if (yMax > scaledHeight) yMax = scaledHeight;
+            if (xMax - xMin < 0.1 || yMax - yMin < 0.1) continue;
+
+            cutouts.add(new double[] { xMin, yMin, xMax, yMax });
+        }
+        return cutouts;
+    }
+
+    /** Remove bottom tabs that sit under a cutout reaching the floor (doors). */
+    private static List<TabPattern.Span> filterBottomTabsByCutouts(
+            List<TabPattern.Span> tabs, List<double[]> cutouts) {
+        if (cutouts.isEmpty()) return tabs;
+        List<TabPattern.Span> out = new ArrayList<>(tabs.size());
+        final double FLOOR_EPS = 0.5; // mm
+        for (TabPattern.Span tab : tabs) {
+            boolean covered = false;
+            for (double[] cut : cutouts) {
+                if (cut[1] > FLOOR_EPS) continue; // window, doesn't reach floor
+                if (tab.end > cut[0] && tab.start < cut[2]) { covered = true; break; }
+            }
+            if (!covered) out.add(tab);
+        }
+        return out;
     }
 
     private static boolean isPrimary(Wall self, Wall other) {
@@ -250,6 +334,14 @@ public final class LasercutExporter {
             double offX = -b[0];
             double offY = cursorY - b[1];
             result.shapes.add(translated(piece.outline(), offX, offY));
+            for (double[] cut : piece.cutouts) {
+                List<double[]> rect = new ArrayList<>(4);
+                rect.add(new double[] { cut[0] + offX, cut[1] + offY });
+                rect.add(new double[] { cut[2] + offX, cut[1] + offY });
+                rect.add(new double[] { cut[2] + offX, cut[3] + offY });
+                rect.add(new double[] { cut[0] + offX, cut[3] + offY });
+                result.shapes.add(rect);
+            }
             double pw = b[2] - b[0];
             double ph = b[3] - b[1];
             if (pw > maxW) maxW = pw;

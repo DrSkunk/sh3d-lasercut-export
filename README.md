@@ -12,8 +12,14 @@ finger joints where they meet other walls.
 - Consolidates all walls to a single user-specified material thickness.
 - Generates one wall piece per wall and one combined floor plate.
 - Floor plate has rectangular slots aligned with each wall's bottom fingers.
+- Doors and windows are cut out of their host wall as rectangular openings
+  sized and positioned to match the model. Doors that reach the floor also
+  remove any bottom fingers that would dangle in the opening.
 - Optional **smooth wall connections**: walls don't interlock with each other,
   only with the floor (useful when corners will be glued or trimmed).
+- Live preview of the cut layout in the options dialog with adjustable scale,
+  configurable cut stroke color (default `#FF0000`), and on-the-fly size
+  estimate.
 
 ## Building
 
@@ -33,6 +39,22 @@ You need a JDK (8 or newer) and Apache Ant.
    ```
 
 3. The plugin file is written to `dist/LasercutExport.sh3p`.
+
+## CI/CD
+
+GitHub Actions builds this plugin automatically:
+
+- On pull requests and pushes to `main`, CI compiles and uploads a workflow
+  artifact named `LasercutExport-sh3p`.
+- On tags matching `v*` (for example `v1.0.0`), CD rebuilds the plugin and
+  publishes `dist/LasercutExport.sh3p` as a GitHub release asset.
+
+To cut a release:
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ## Installing
 

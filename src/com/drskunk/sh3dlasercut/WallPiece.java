@@ -22,12 +22,18 @@ public final class WallPiece {
     public final List<TabPattern.Span> leftTabs;
     /** Tabs on the end edge (x=length). May be null if edge is straight. */
     public final List<TabPattern.Span> rightTabs;
+    /**
+     * Door/window cutouts in wall-local coords, each as
+     * {@code [xMin, yMin, xMax, yMax]}. Cuts inside the main rectangle.
+     */
+    public final List<double[]> cutouts;
     public final String label;
 
     public WallPiece(double length, double height, double thickness,
                      List<TabPattern.Span> bottomTabs,
                      List<TabPattern.Span> leftTabs,
                      List<TabPattern.Span> rightTabs,
+                     List<double[]> cutouts,
                      String label) {
         this.length = length;
         this.height = height;
@@ -35,6 +41,7 @@ public final class WallPiece {
         this.bottomTabs = bottomTabs;
         this.leftTabs = leftTabs;
         this.rightTabs = rightTabs;
+        this.cutouts = cutouts != null ? cutouts : new ArrayList<>();
         this.label = label;
     }
 
