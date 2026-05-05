@@ -5,6 +5,14 @@ cutting. Walls become rectangular pieces with **box-joint fingers** on the
 bottom edge that slot into the floor plate. Optionally, walls also receive
 finger joints where they meet other walls.
 
+You go from this:
+
+![Floor Plan](./images/sw3d_floor.png)
+
+To this:
+
+![Export](./images/export.png)
+
 ## Features
 
 - Adds **Tools → Export to lasercut SVG…** to Sweet Home 3D.
