@@ -115,32 +115,43 @@ public final class LasercutExporter {
 
     private WallPiece buildWallPiece(Wall wall, Set<Wall> levelWalls, int index) {
         double sf = scaleFactor();
-        double length = rawWallLengthMm(wall) * sf;
         double height = rawWallHeightMm(wall, home) * sf;
         double thickness = options.materialThickness;
         double tabWidth = options.tabWidth;
 
-        // Bottom tabs always present.
-        // startsWithTab = false → corners are flat, slots sit cleanly inside the floor outline.
-        List<TabPattern.Span> bottomTabs = TabPattern.compute(length, tabWidth, false);
-
         List<TabPattern.Span> leftTabs = null;
         List<TabPattern.Span> rightTabs = null;
+        boolean leftConnected = false, rightConnected = false;
         if (!options.smoothConnections) {
             Wall startNeighbor = wall.getWallAtStart();
             if (startNeighbor != null && levelWalls.contains(startNeighbor)) {
+                leftConnected = true;
                 boolean primary = isPrimary(wall, startNeighbor);
                 leftTabs = TabPattern.compute(height, tabWidth, !primary);
             }
             Wall endNeighbor = wall.getWallAtEnd();
             if (endNeighbor != null && levelWalls.contains(endNeighbor)) {
+                rightConnected = true;
                 boolean primary = isPrimary(wall, endNeighbor);
                 rightTabs = TabPattern.compute(height, tabWidth, !primary);
             }
         }
 
-        // Door / window cutouts (in scaled wall-local coords).
-        List<double[]> cutouts = findCutouts(wall, sf, length, height);
+        // Each connected end is inset by half the material thickness so that the
+        // finger tabs protrude from the adjacent wall's inner face to its outer
+        // face (spanning exactly one material thickness), rather than from the
+        // wall's centre-line (which would overshoot by t/2).
+        double startOffset = leftConnected  ? thickness / 2.0 : 0;
+        double endOffset   = rightConnected ? thickness / 2.0 : 0;
+        double length = rawWallLengthMm(wall) * sf - startOffset - endOffset;
+
+        // Bottom tabs always present.
+        // startsWithTab = false → corners are flat, slots sit cleanly inside the floor outline.
+        List<TabPattern.Span> bottomTabs = TabPattern.compute(length, tabWidth, false);
+
+        // Door / window cutouts in panel-local coords (origin = panel x=0, which
+        // is inset from the wall centre-line start by startOffset).
+        List<double[]> cutouts = findCutouts(wall, sf, length, height, startOffset);
 
         // Drop bottom tabs that sit underneath a doorway — otherwise the tab
         // would be a detached strip dangling in the opening.
@@ -150,7 +161,14 @@ public final class LasercutExporter {
                 cutouts, "W" + index);
     }
 
-    private List<double[]> findCutouts(Wall wall, double sf, double scaledLength, double scaledHeight) {
+    /**
+     * @param startOffset distance (in scaled mm) from the wall centre-line start
+     *                    to the panel's local x=0.  Non-zero when the start end of
+     *                    the wall has a finger-joint connection and the panel is
+     *                    inset by half a material thickness.
+     */
+    private List<double[]> findCutouts(Wall wall, double sf, double scaledLength,
+                                       double scaledHeight, double startOffset) {
         List<double[]> cutouts = new ArrayList<>();
         if (home.getFurniture() == null) return cutouts;
 
@@ -191,8 +209,11 @@ public final class LasercutExporter {
                 if (a > maxAlongCm) maxAlongCm = a;
             }
 
-            double xMin = minAlongCm * CM_TO_MM * sf;
-            double xMax = maxAlongCm * CM_TO_MM * sf;
+            // Convert to panel-local x coordinates: subtract startOffset so that
+            // x=0 corresponds to the panel's left edge (inset from the centre-line
+            // start), not to the wall centre-line start.
+            double xMin = minAlongCm * CM_TO_MM * sf - startOffset;
+            double xMax = maxAlongCm * CM_TO_MM * sf - startOffset;
             double yMin = p.getElevation() * CM_TO_MM * sf;
             double yMax = (p.getElevation() + p.getHeight()) * CM_TO_MM * sf;
 
@@ -277,27 +298,39 @@ public final class LasercutExporter {
         double t = options.materialThickness;
         for (Wall wall : walls) {
             WallPiece piece = pieces.get(wall);
-            // Wall start/end in scaled world coords.
+            // Wall start/end in scaled world coords (centre-line endpoints).
             double sx = wall.getXStart() * CM_TO_MM * sf;
             double sy = wall.getYStart() * CM_TO_MM * sf;
-            double ex = wall.getXEnd() * CM_TO_MM * sf;
-            double ey = wall.getYEnd() * CM_TO_MM * sf;
-            double L = piece.length;
-            if (L <= 0) continue;
-            double dx = (ex - sx) / L;
-            double dy = (ey - sy) / L;
+            double ex = wall.getXEnd()   * CM_TO_MM * sf;
+            double ey = wall.getYEnd()   * CM_TO_MM * sf;
+            // Unit vector along the wall from the raw (centre-to-centre) distance.
+            // We must NOT divide by piece.length here because piece.length is the
+            // corrected panel length (shorter than the centre-to-centre distance
+            // whenever the wall has finger-joint connections at its ends).
+            double rawLen = Math.hypot(ex - sx, ey - sy);
+            if (rawLen <= 0) continue;
+            double dx = (ex - sx) / rawLen;
+            double dy = (ey - sy) / rawLen;
             double nx = -dy;
-            double ny = dx;
+            double ny =  dx;
+
+            // The panel's x=0 is inset from the centre-line start by half a
+            // material thickness whenever the start end has a finger-joint
+            // connection (piece.leftTabs != null).  Shift the slot origin to
+            // match the panel's physical starting position in world space.
+            double startOffset = (piece.leftTabs != null) ? t / 2.0 : 0;
+            double pSx = sx + dx * startOffset;
+            double pSy = sy + dy * startOffset;
 
             for (TabPattern.Span span : piece.bottomTabs) {
                 double a = span.start;
                 double b = span.end;
                 double half = t / 2.0;
                 double[][] rect = new double[][] {
-                        { sx + dx * a + nx * (-half), sy + dy * a + ny * (-half) },
-                        { sx + dx * b + nx * (-half), sy + dy * b + ny * (-half) },
-                        { sx + dx * b + nx * (+half), sy + dy * b + ny * (+half) },
-                        { sx + dx * a + nx * (+half), sy + dy * a + ny * (+half) },
+                        { pSx + dx * a + nx * (-half), pSy + dy * a + ny * (-half) },
+                        { pSx + dx * b + nx * (-half), pSy + dy * b + ny * (-half) },
+                        { pSx + dx * b + nx * (+half), pSy + dy * b + ny * (+half) },
+                        { pSx + dx * a + nx * (+half), pSy + dy * a + ny * (+half) },
                 };
                 slots.add(rect);
             }
