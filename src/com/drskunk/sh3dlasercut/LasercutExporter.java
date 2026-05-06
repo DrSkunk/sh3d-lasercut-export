@@ -326,6 +326,22 @@ public final class LasercutExporter {
         double fh = floor.bounds[3] - floor.bounds[1];
         if (fw > maxW) maxW = fw;
         result.labels.add(new LayoutResult.Label("FLOOR", 4, 8, 6));
+
+        // Add wall labels on the floor piece at each wall's midpoint position,
+        // so the assembler knows where each numbered wall panel is placed.
+        double sf = scaleFactor();
+        for (Map.Entry<Wall, WallPiece> entry : pieces.entrySet()) {
+            Wall wall = entry.getKey();
+            WallPiece piece = entry.getValue();
+            double sx = wall.getXStart() * CM_TO_MM * sf;
+            double sy = wall.getYStart() * CM_TO_MM * sf;
+            double ex = wall.getXEnd() * CM_TO_MM * sf;
+            double ey = wall.getYEnd() * CM_TO_MM * sf;
+            double midX = (sx + ex) / 2.0 + fOffX;
+            double midY = (sy + ey) / 2.0 + fOffY;
+            result.labels.add(new LayoutResult.Label(piece.label, midX, midY, 4));
+        }
+
         cursorY = fh + spacing;
 
         // Walls: stacked vertically.
