@@ -61,6 +61,7 @@ public final class LasercutExporter {
         for (Wall w : walls) {
             pieces.put(w, buildWallPiece(w, wallSet, idx++));
         }
+        addTJunctionNotches(walls, wallSet, pieces);
         FloorPiece floor = buildFloorPiece(walls, pieces);
 
         return composeLayout(pieces, floor);
@@ -269,6 +270,85 @@ public final class LasercutExporter {
     }
 
     // ---- floor geometry ------------------------------------------------------
+
+    /**
+     * Second pass: for every T-junction (where an inner wall's endpoint meets the
+     * body of an outer wall, not at the outer wall's own endpoints), cut matching
+     * notch slots through the outer wall's face so that the inner wall's finger
+     * tabs have somewhere to fit.
+     *
+     * <p>Detection: wall B is a T-junction inner wall relative to outer wall A when
+     * {@code B.getWallAtStart() == A} (or {@code B.getWallAtEnd() == A}) AND
+     * neither {@code A.getWallAtStart()} nor {@code A.getWallAtEnd()} equals B.
+     * The latter condition distinguishes a T-junction from a regular corner where
+     * both walls mutually reference each other.</p>
+     */
+    private void addTJunctionNotches(List<Wall> walls, Set<Wall> wallSet,
+                                     Map<Wall, WallPiece> pieces) {
+        if (options.smoothConnections) return;
+        double sf = scaleFactor();
+        double t  = options.materialThickness;
+
+        for (Wall outer : walls) {
+            WallPiece outerPiece = pieces.get(outer);
+
+            double oxs = outer.getXStart();
+            double oys = outer.getYStart();
+            double oxe = outer.getXEnd();
+            double oye = outer.getYEnd();
+            double outerRawLen = Math.hypot(oxe - oxs, oye - oys);
+            if (outerRawLen <= 0) continue;
+            double ux = (oxe - oxs) / outerRawLen;
+            double uy = (oye - oys) / outerRawLen;
+
+            // Outer panel's x=0 is inset from its centre-line start whenever it
+            // has a left-edge finger-joint connection.
+            double outerStartOffset = (outerPiece.leftTabs != null) ? t / 2.0 : 0;
+
+            for (Wall inner : walls) {
+                if (inner == outer) continue;
+                if (!wallSet.contains(inner)) continue;
+
+                // T-junction: inner's start connects to outer's body.
+                boolean innerStartOnOuter =
+                        inner.getWallAtStart() == outer
+                        && outer.getWallAtStart() != inner
+                        && outer.getWallAtEnd()   != inner;
+
+                // T-junction: inner's end connects to outer's body.
+                boolean innerEndOnOuter =
+                        inner.getWallAtEnd() == outer
+                        && outer.getWallAtStart() != inner
+                        && outer.getWallAtEnd()   != inner;
+
+                if (!innerStartOnOuter && !innerEndOnOuter) continue;
+
+                WallPiece innerPiece = pieces.get(inner);
+                // The tabs on the inner wall's connecting edge are the ones that
+                // must pass through slots in the outer wall.
+                List<TabPattern.Span> innerEdgeTabs =
+                        innerStartOnOuter ? innerPiece.leftTabs : innerPiece.rightTabs;
+                if (innerEdgeTabs == null || innerEdgeTabs.isEmpty()) continue;
+
+                // Project the inner wall's connection point onto the outer wall's
+                // axis to get the along-wall coordinate in cm.
+                double cx = innerStartOnOuter ? inner.getXStart() : inner.getXEnd();
+                double cy = innerStartOnOuter ? inner.getYStart() : inner.getYEnd();
+                double alongCm = (cx - oxs) * ux + (cy - oys) * uy;
+
+                // Convert to outer panel-local x (subtract panel start offset).
+                double xCenter = alongCm * CM_TO_MM * sf - outerStartOffset;
+
+                double half = t / 2.0;
+                for (TabPattern.Span span : innerEdgeTabs) {
+                    outerPiece.cutouts.add(new double[] {
+                            xCenter - half, span.start,
+                            xCenter + half, span.end
+                    });
+                }
+            }
+        }
+    }
 
     private FloorPiece buildFloorPiece(List<Wall> walls, Map<Wall, WallPiece> pieces) {
         double sf = scaleFactor();
