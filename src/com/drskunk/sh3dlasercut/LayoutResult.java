@@ -19,6 +19,13 @@ public final class LayoutResult {
     public double width;
     public double height;
 
+    /**
+     * Non-null when the floor baseplate does not fit within the specified
+     * board size and automatic splitting has not been requested. The string
+     * is a human-readable warning message suitable for display in the UI.
+     */
+    public String boardWarning = null;
+
     public static final class Label {
         public final String text;
         public final double x, y, size;

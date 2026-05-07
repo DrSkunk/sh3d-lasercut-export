@@ -44,6 +44,11 @@ public final class ExportOptionsPanel {
         final JCheckBox  smoothBox      = new JCheckBox(
                 "Smooth wall-to-wall connections (only floor connects to walls)",
                 defaults.smoothConnections);
+        final JTextField boardWidthField  = new JTextField(format(defaults.boardWidth), 8);
+        final JTextField boardHeightField = new JTextField(format(defaults.boardHeight), 8);
+        final JCheckBox  splitFloorBox    = new JCheckBox(
+                "Split floor with puzzle joints if too large",
+                defaults.splitFloor);
 
         final Color[] colorHolder = { defaults.cutStrokeColor != null ? defaults.cutStrokeColor : Color.RED };
         final JButton colorButton = new JButton();
@@ -61,14 +66,20 @@ public final class ExportOptionsPanel {
             try {
                 ExportOptions tentative = readOptions(
                         scaleField, thicknessField, tabWidthField,
-                        marginField, spacingField, strokeField, smoothBox, colorHolder[0]);
+                        marginField, spacingField, strokeField, smoothBox, colorHolder[0],
+                        boardWidthField, boardHeightField, splitFloorBox);
                 LayoutResult layout = new LasercutExporter(home, tentative).buildLayout();
                 preview.setLayout(layout, tentative.cutStrokeColor);
-                double[] size = metrics.estimateOutputSize(tentative);
-                previewLabel.setForeground(Color.BLACK);
-                previewLabel.setText(String.format(Locale.US,
-                        "Estimated output: %.0f × %.0f mm   (1:%.0f scale)",
-                        size[0], size[1], tentative.scaleDivisor));
+                if (layout.boardWarning != null) {
+                    previewLabel.setForeground(new Color(0xCC6600));
+                    previewLabel.setText("[!] " + layout.boardWarning);
+                } else {
+                    double[] size = metrics.estimateOutputSize(tentative);
+                    previewLabel.setForeground(Color.BLACK);
+                    previewLabel.setText(String.format(Locale.US,
+                            "Estimated output: %.0f \u00d7 %.0f mm   (1:%.0f scale)",
+                            size[0], size[1], tentative.scaleDivisor));
+                }
             } catch (RuntimeException ex) {
                 preview.setEmpty("(invalid options)");
                 previewLabel.setForeground(new Color(0xAA0000));
@@ -88,6 +99,9 @@ public final class ExportOptionsPanel {
         spacingField.getDocument().addDocumentListener(live);
         strokeField.getDocument().addDocumentListener(live);
         smoothBox.addActionListener(e -> refresh.run());
+        boardWidthField.getDocument().addDocumentListener(live);
+        boardHeightField.getDocument().addDocumentListener(live);
+        splitFloorBox.addActionListener(e -> refresh.run());
         colorButton.addActionListener(e -> {
             Color picked = JColorChooser.showDialog(colorButton, "Cut stroke color", colorHolder[0]);
             if (picked != null) {
@@ -114,6 +128,12 @@ public final class ExportOptionsPanel {
 
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         form.add(smoothBox, c);
+
+        addRow(form, c, row++, "Board width (mm, 0=no limit):", boardWidthField);
+        addRow(form, c, row++, "Board height (mm, 0=no limit):", boardHeightField);
+
+        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
+        form.add(splitFloorBox, c);
 
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         c.insets = new Insets(10, 6, 2, 6);
@@ -148,7 +168,8 @@ public final class ExportOptionsPanel {
 
         try {
             return readOptions(scaleField, thicknessField, tabWidthField,
-                    marginField, spacingField, strokeField, smoothBox, colorHolder[0]);
+                    marginField, spacingField, strokeField, smoothBox, colorHolder[0],
+                    boardWidthField, boardHeightField, splitFloorBox);
         } catch (RuntimeException e) {
             JOptionPane.showMessageDialog(parent, e.getMessage(),
                     "Invalid input", JOptionPane.ERROR_MESSAGE);
@@ -159,16 +180,20 @@ public final class ExportOptionsPanel {
     private static ExportOptions readOptions(
             JTextField scaleField, JTextField thicknessField, JTextField tabWidthField,
             JTextField marginField, JTextField spacingField, JTextField strokeField,
-            JCheckBox smoothBox, Color cutColor) {
+            JCheckBox smoothBox, Color cutColor,
+            JTextField boardWidthField, JTextField boardHeightField, JCheckBox splitFloorBox) {
         ExportOptions opts = new ExportOptions();
-        opts.scaleDivisor      = parsePositive(scaleField.getText(),  "Scale divisor");
-        opts.materialThickness = parsePositive(thicknessField.getText(), "Material thickness");
-        opts.tabWidth          = parsePositive(tabWidthField.getText(),  "Finger width");
-        opts.floorMargin       = parseNonNegative(marginField.getText(), "Floor margin");
+        opts.scaleDivisor      = parsePositive(scaleField.getText(),      "Scale divisor");
+        opts.materialThickness = parsePositive(thicknessField.getText(),  "Material thickness");
+        opts.tabWidth          = parsePositive(tabWidthField.getText(),   "Finger width");
+        opts.floorMargin       = parseNonNegative(marginField.getText(),  "Floor margin");
         opts.layoutSpacing     = parseNonNegative(spacingField.getText(), "Layout spacing");
         opts.svgStrokeWidth    = parseNonNegative(strokeField.getText(),  "Stroke width");
         opts.smoothConnections = smoothBox.isSelected();
         opts.cutStrokeColor    = cutColor != null ? cutColor : Color.RED;
+        opts.boardWidth        = parseNonNegative(boardWidthField.getText(),  "Board width");
+        opts.boardHeight       = parseNonNegative(boardHeightField.getText(), "Board height");
+        opts.splitFloor        = splitFloorBox.isSelected();
         return opts;
     }
 
