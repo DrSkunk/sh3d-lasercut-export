@@ -31,6 +31,14 @@ public final class LasercutExporter {
     /** Tolerance used for floating-point dimension comparisons, in mm. */
     private static final double SEAM_TOLERANCE = 1e-3;
 
+    /**
+     * Epsilon used when comparing individual coordinate values (e.g. to
+     * detect whether a closing point duplicates the start point of a polygon).
+     * Smaller than {@link #SEAM_TOLERANCE} because it operates on single
+     * floating-point coordinates rather than accumulated dimensions.
+     */
+    private static final double COORD_EPSILON = 1e-9;
+
     private final Home home;
     private final ExportOptions options;
     private final Level targetLevel; // null = export every wall in the home
@@ -42,7 +50,7 @@ public final class LasercutExporter {
     }
 
     public List<File> export(File outputFile) throws IOException {
-        if (options.separateFilesPerBoard && options.boardWidth > 0 && options.boardHeight > 0) {
+        if (options.separateFilesPerBoard && isBoardConstrained()) {
             List<LayoutResult> boards = buildBoardLayouts();
             if (boards.isEmpty() || boards.get(0).shapes.isEmpty()) {
                 throw new IOException("No walls found on the selected level.");
@@ -80,7 +88,7 @@ public final class LasercutExporter {
         int[] gridSize = { 1, 1 }; // [numCols, numRows] of floor tile grid
         List<FloorPiece> floorTiles = buildFloorTiles(walls, pieces, result, gridSize);
 
-        if (options.boardWidth > 0 && options.boardHeight > 0) {
+        if (isBoardConstrained()) {
             List<BoardItem> items = gatherItems(walls, pieces, floorTiles);
             List<LayoutResult> boards = packOntoBoards(items);
             buildCombinedLayout(boards, result);
@@ -161,6 +169,11 @@ public final class LasercutExporter {
 
     private double scaleFactor() {
         return 1.0 / options.scaleDivisor;
+    }
+
+    /** Returns true when both board dimensions are positive (board packing is active). */
+    private boolean isBoardConstrained() {
+        return options.boardWidth > 0 && options.boardHeight > 0;
     }
 
     private WallPiece buildWallPiece(Wall wall, Set<Wall> levelWalls, int index) {
@@ -510,7 +523,7 @@ public final class LasercutExporter {
         if (!pts.isEmpty()) {
             double[] first = pts.get(0);
             double[] last  = pts.get(pts.size() - 1);
-            if (Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9) {
+            if (Math.abs(first[0] - last[0]) < COORD_EPSILON && Math.abs(first[1] - last[1]) < COORD_EPSILON) {
                 pts.remove(pts.size() - 1);
             }
         }
@@ -789,6 +802,9 @@ public final class LasercutExporter {
             double ph = item.height;
 
             // Start a new row if this item doesn't fit horizontally.
+            // SEAM_TOLERANCE accounts for small floating-point accumulated errors
+            // in cursor positions so that items at precisely the board edge are
+            // not incorrectly wrapped to a new row.
             if (cursorX > 0 && cursorX + pw > usableW + SEAM_TOLERANCE) {
                 double rowW = cursorX - spacing;
                 if (rowW > maxW) maxW = rowW;

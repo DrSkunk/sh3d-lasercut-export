@@ -52,7 +52,7 @@ public final class ExportOptionsPanel {
                 "Split floor with puzzle joints if too large",
                 defaults.splitFloor);
         final JCheckBox  separateFilesBox = new JCheckBox(
-                "Write one SVG file per board (requires board dimensions)",
+                "Write one SVG file per board (requires both board dimensions)",
                 defaults.separateFilesPerBoard);
 
         final Color[] colorHolder = { defaults.cutStrokeColor != null ? defaults.cutStrokeColor : Color.RED };
