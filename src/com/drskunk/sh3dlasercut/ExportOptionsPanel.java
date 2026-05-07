@@ -29,6 +29,8 @@ import java.util.Locale;
  */
 public final class ExportOptionsPanel {
 
+    private static final Color WARNING_COLOR = new Color(0xCC6600);
+
     private ExportOptionsPanel() {}
 
     public static ExportOptions showDialog(Component parent, Home home, ExportOptions defaults) {
@@ -71,7 +73,7 @@ public final class ExportOptionsPanel {
                 LayoutResult layout = new LasercutExporter(home, tentative).buildLayout();
                 preview.setLayout(layout, tentative.cutStrokeColor);
                 if (layout.boardWarning != null) {
-                    previewLabel.setForeground(new Color(0xCC6600));
+                    previewLabel.setForeground(WARNING_COLOR);
                     previewLabel.setText("[!] " + layout.boardWarning);
                 } else {
                     double[] size = metrics.estimateOutputSize(tentative);

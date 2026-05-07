@@ -28,6 +28,9 @@ public final class LasercutExporter {
 
     private static final double CM_TO_MM = 10.0;
 
+    /** Tolerance used for floating-point dimension comparisons, in mm. */
+    private static final double SEAM_TOLERANCE = 1e-3;
+
     private final Home home;
     private final ExportOptions options;
     private final Level targetLevel; // null = export every wall in the home
@@ -295,8 +298,8 @@ public final class LasercutExporter {
 
         double bw = options.boardWidth;
         double bh = options.boardHeight;
-        boolean tooWide = bw > 0 && floorW > bw + 1e-3;
-        boolean tooTall = bh > 0 && floorH > bh + 1e-3;
+        boolean tooWide = bw > 0 && floorW > bw + SEAM_TOLERANCE;
+        boolean tooTall = bh > 0 && floorH > bh + SEAM_TOLERANCE;
 
         if (!tooWide && !tooTall) {
             gridSize[0] = 1; gridSize[1] = 1;
@@ -305,12 +308,10 @@ public final class LasercutExporter {
         }
 
         if (!options.splitFloor) {
-            String bwStr = bw > 0 ? String.format(Locale.US, "%.0f", bw) : "none";
-            String bhStr = bh > 0 ? String.format(Locale.US, "%.0f", bh) : "none";
             result.boardWarning = String.format(Locale.US,
                     "Floor (%.0f \u00d7 %.0f mm) exceeds board size (%s \u00d7 %s mm). "
-                            + "Enable \"Split floor with puzzle joints\" to split automatically.",
-                    floorW, floorH, bwStr, bhStr);
+                            + "Enable \"Split floor with puzzle joints if too large\" to split automatically.",
+                    floorW, floorH, fmtBoardDim(bw), fmtBoardDim(bh));
             gridSize[0] = 1; gridSize[1] = 1;
             return Collections.singletonList(
                     new FloorPiece(buildRectOutline(minX, minY, maxX, maxY), allSlots));
@@ -382,6 +383,11 @@ public final class LasercutExporter {
         return slots;
     }
 
+    /** Format a board dimension for display: "none" when unconstrained (≤ 0), else "%.0f". */
+    private static String fmtBoardDim(double mm) {
+        return mm > 0 ? String.format(Locale.US, "%.0f", mm) : "none";
+    }
+
     /**
      * Compute the boundary coordinates (start, seam1, seam2, …, end) for one
      * axis given a board dimension.  If {@code boardSize} is ≤ 0 the result is
@@ -390,9 +396,9 @@ public final class LasercutExporter {
     private static List<Double> buildSeamCoords(double start, double end, double boardSize) {
         List<Double> coords = new ArrayList<>();
         coords.add(start);
-        if (boardSize > 0 && end - start > boardSize + 1e-3) {
+        if (boardSize > 0 && end - start > boardSize + SEAM_TOLERANCE) {
             double pos = start + boardSize;
-            while (pos < end - 1e-3) {
+            while (pos < end - SEAM_TOLERANCE) {
                 coords.add(pos);
                 pos += boardSize;
             }
@@ -590,11 +596,14 @@ public final class LasercutExporter {
                                                         double x1, double y1) {
         List<double[][]> out = new ArrayList<>();
         for (double[][] slot : allSlots) {
+            if (slot.length == 0) continue;
             double cx = 0, cy = 0;
             for (double[] p : slot) { cx += p[0]; cy += p[1]; }
             cx /= slot.length;
             cy /= slot.length;
-            if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) {
+            // Half-open intervals [x0, x1) × [y0, y1) ensure a slot whose centre
+            // sits exactly on a seam is assigned to exactly one tile.
+            if (cx >= x0 && cx < x1 && cy >= y0 && cy < y1) {
                 out.add(slot);
             }
         }
