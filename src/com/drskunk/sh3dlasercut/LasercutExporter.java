@@ -116,7 +116,9 @@ public final class LasercutExporter {
 
     private WallPiece buildWallPiece(Wall wall, Set<Wall> levelWalls, int index) {
         double sf = scaleFactor();
-        double height = rawWallHeightMm(wall, home) * sf;
+        double heightAtStart = rawWallHeightMm(wall, home) * sf;
+        double heightAtEnd   = rawWallEndHeightMm(wall, home) * sf;
+        boolean sloping = isSloping(wall, home);
         double thickness = options.materialThickness;
         double tabWidth = options.tabWidth;
 
@@ -125,16 +127,24 @@ public final class LasercutExporter {
         boolean leftConnected = false, rightConnected = false;
         if (!options.smoothConnections) {
             Wall startNeighbor = wall.getWallAtStart();
-            if (startNeighbor != null && levelWalls.contains(startNeighbor)) {
+            boolean skipStart = startNeighbor != null
+                    && (sloping || isSloping(startNeighbor, home))
+                    && options.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH;
+            if (!skipStart && startNeighbor != null && levelWalls.contains(startNeighbor)) {
                 leftConnected = true;
                 boolean primary = isPrimary(wall, startNeighbor);
-                leftTabs = TabPattern.compute(height, tabWidth, !primary);
+                double jointH = computeJointHeightScaled(wall, true, startNeighbor, sf);
+                leftTabs = TabPattern.compute(jointH, tabWidth, !primary);
             }
             Wall endNeighbor = wall.getWallAtEnd();
-            if (endNeighbor != null && levelWalls.contains(endNeighbor)) {
+            boolean skipEnd = endNeighbor != null
+                    && (sloping || isSloping(endNeighbor, home))
+                    && options.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH;
+            if (!skipEnd && endNeighbor != null && levelWalls.contains(endNeighbor)) {
                 rightConnected = true;
                 boolean primary = isPrimary(wall, endNeighbor);
-                rightTabs = TabPattern.compute(height, tabWidth, !primary);
+                double jointH = computeJointHeightScaled(wall, false, endNeighbor, sf);
+                rightTabs = TabPattern.compute(jointH, tabWidth, !primary);
             }
         }
 
@@ -152,14 +162,18 @@ public final class LasercutExporter {
 
         // Door / window cutouts in panel-local coords (origin = panel x=0, which
         // is inset from the wall centre-line start by startOffset).
-        List<double[]> cutouts = findCutouts(wall, sf, length, height, startOffset);
+        // For sloping walls use the taller of the two end heights as the clamp so
+        // that cutouts spanning the full height of either end are not incorrectly
+        // truncated.
+        double maxHeight = Math.max(heightAtStart, heightAtEnd);
+        List<double[]> cutouts = findCutouts(wall, sf, length, maxHeight, startOffset);
 
         // Drop bottom tabs that sit underneath a doorway — otherwise the tab
         // would be a detached strip dangling in the opening.
         bottomTabs = filterBottomTabsByCutouts(bottomTabs, cutouts);
 
-        return new WallPiece(length, height, thickness, bottomTabs, leftTabs, rightTabs,
-                cutouts, "W" + index);
+        return new WallPiece(length, heightAtStart, heightAtEnd, thickness,
+                bottomTabs, leftTabs, rightTabs, cutouts, "W" + index);
     }
 
     /**
@@ -251,6 +265,9 @@ public final class LasercutExporter {
         return System.identityHashCode(self) < System.identityHashCode(other);
     }
 
+    /** Minimum height difference (mm) for a wall to be considered sloping. */
+    private static final double SLOPING_THRESHOLD_MM = 0.5;
+
     private static double rawWallLengthMm(Wall wall) {
         double dx = (wall.getXEnd() - wall.getXStart()) * CM_TO_MM;
         double dy = (wall.getYEnd() - wall.getYStart()) * CM_TO_MM;
@@ -267,6 +284,38 @@ public final class LasercutExporter {
             return lvl.getHeight() * CM_TO_MM;
         }
         return home.getWallHeight() * CM_TO_MM;
+    }
+
+    /** Height of the wall at its end point, in mm.  Returns the same value as
+     *  {@link #rawWallHeightMm} when the wall does not slope. */
+    private static double rawWallEndHeightMm(Wall wall, Home home) {
+        Float h = wall.getHeightAtEnd();
+        if (h != null) {
+            return h * CM_TO_MM;
+        }
+        return rawWallHeightMm(wall, home);
+    }
+
+    /** Returns true when the wall has a measurably different height at each end. */
+    private static boolean isSloping(Wall wall, Home home) {
+        return Math.abs(rawWallHeightMm(wall, home) - rawWallEndHeightMm(wall, home)) > SLOPING_THRESHOLD_MM;
+    }
+
+    /**
+     * Returns the scaled tab height to use at the joint between {@code wall}
+     * (at its start end when {@code atStart=true}, end end otherwise) and
+     * {@code neighbor}.  Uses the minimum of the two walls' heights at the
+     * junction so that the tab pattern fits within both panels.
+     */
+    private double computeJointHeightScaled(Wall wall, boolean atStart,
+                                            Wall neighbor, double sf) {
+        double selfH = atStart ? rawWallHeightMm(wall, home)
+                               : rawWallEndHeightMm(wall, home);
+        // Determine which end of the neighbor touches us.
+        boolean neighborAtStart = (neighbor.getWallAtStart() == wall);
+        double neighborH = neighborAtStart ? rawWallHeightMm(neighbor, home)
+                                           : rawWallEndHeightMm(neighbor, home);
+        return Math.min(selfH, neighborH) * sf;
     }
 
     // ---- floor geometry ------------------------------------------------------

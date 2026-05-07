@@ -6,6 +6,7 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JColorChooser;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -45,6 +46,14 @@ public final class ExportOptionsPanel {
                 "Smooth wall-to-wall connections (only floor connects to walls)",
                 defaults.smoothConnections);
 
+        final String[] slopingItems = {
+                "Compensate (clip joints to actual height)",
+                "Smooth (no finger joints on sloping wall ends)"
+        };
+        final JComboBox<String> slopingBox = new JComboBox<>(slopingItems);
+        slopingBox.setSelectedIndex(
+                defaults.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH ? 1 : 0);
+
         final Color[] colorHolder = { defaults.cutStrokeColor != null ? defaults.cutStrokeColor : Color.RED };
         final JButton colorButton = new JButton();
         colorButton.setPreferredSize(new Dimension(80, 22));
@@ -61,7 +70,8 @@ public final class ExportOptionsPanel {
             try {
                 ExportOptions tentative = readOptions(
                         scaleField, thicknessField, tabWidthField,
-                        marginField, spacingField, strokeField, smoothBox, colorHolder[0]);
+                        marginField, spacingField, strokeField,
+                        smoothBox, slopingBox, colorHolder[0]);
                 LayoutResult layout = new LasercutExporter(home, tentative).buildLayout();
                 preview.setLayout(layout, tentative.cutStrokeColor);
                 double[] size = metrics.estimateOutputSize(tentative);
@@ -88,6 +98,7 @@ public final class ExportOptionsPanel {
         spacingField.getDocument().addDocumentListener(live);
         strokeField.getDocument().addDocumentListener(live);
         smoothBox.addActionListener(e -> refresh.run());
+        slopingBox.addActionListener(e -> refresh.run());
         colorButton.addActionListener(e -> {
             Color picked = JColorChooser.showDialog(colorButton, "Cut stroke color", colorHolder[0]);
             if (picked != null) {
@@ -114,6 +125,15 @@ public final class ExportOptionsPanel {
 
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         form.add(smoothBox, c);
+
+        c.gridx = 0; c.gridy = row; c.gridwidth = 1;
+        c.fill = GridBagConstraints.NONE;
+        c.insets = new Insets(4, 6, 4, 6);
+        form.add(new JLabel("Sloping walls:", SwingConstants.RIGHT), c);
+        c.gridx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        form.add(slopingBox, c);
+        row++;
 
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         c.insets = new Insets(10, 6, 2, 6);
@@ -148,7 +168,7 @@ public final class ExportOptionsPanel {
 
         try {
             return readOptions(scaleField, thicknessField, tabWidthField,
-                    marginField, spacingField, strokeField, smoothBox, colorHolder[0]);
+                    marginField, spacingField, strokeField, smoothBox, slopingBox, colorHolder[0]);
         } catch (RuntimeException e) {
             JOptionPane.showMessageDialog(parent, e.getMessage(),
                     "Invalid input", JOptionPane.ERROR_MESSAGE);
@@ -159,7 +179,7 @@ public final class ExportOptionsPanel {
     private static ExportOptions readOptions(
             JTextField scaleField, JTextField thicknessField, JTextField tabWidthField,
             JTextField marginField, JTextField spacingField, JTextField strokeField,
-            JCheckBox smoothBox, Color cutColor) {
+            JCheckBox smoothBox, JComboBox<String> slopingBox, Color cutColor) {
         ExportOptions opts = new ExportOptions();
         opts.scaleDivisor      = parsePositive(scaleField.getText(),  "Scale divisor");
         opts.materialThickness = parsePositive(thicknessField.getText(), "Material thickness");
@@ -168,6 +188,9 @@ public final class ExportOptionsPanel {
         opts.layoutSpacing     = parseNonNegative(spacingField.getText(), "Layout spacing");
         opts.svgStrokeWidth    = parseNonNegative(strokeField.getText(),  "Stroke width");
         opts.smoothConnections = smoothBox.isSelected();
+        opts.slopingWallMode   = slopingBox.getSelectedIndex() == 1
+                ? ExportOptions.SlopingWallMode.SMOOTH
+                : ExportOptions.SlopingWallMode.COMPENSATE;
         opts.cutStrokeColor    = cutColor != null ? cutColor : Color.RED;
         return opts;
     }
