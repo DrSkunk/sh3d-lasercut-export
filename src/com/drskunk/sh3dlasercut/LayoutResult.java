@@ -26,6 +26,14 @@ public final class LayoutResult {
      */
     public String boardWarning = null;
 
+    /**
+     * Board outline rectangles in layout coordinates, populated when both
+     * {@code boardWidth} and {@code boardHeight} are set.
+     * Each entry is {@code {x, y, w, h}}.  Used by the preview panel to draw
+     * board boundaries and by the SVG writer to emit board outline paths.
+     */
+    public final List<double[]> boardRects = new ArrayList<>();
+
     public static final class Label {
         public final String text;
         public final double x, y, size;

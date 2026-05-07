@@ -9,6 +9,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.Component;
 import java.io.File;
+import java.util.List;
 
 public final class LasercutExportAction extends PluginAction {
 
@@ -42,9 +43,19 @@ public final class LasercutExportAction extends PluginAction {
         lastDirectory = outputFile.getParentFile();
 
         try {
-            new LasercutExporter(home, options).export(outputFile);
-            JOptionPane.showMessageDialog(parent,
-                    "Exported to " + outputFile.getAbsolutePath(),
+            List<File> written = new LasercutExporter(home, options).export(outputFile);
+            String msg;
+            if (written.size() == 1) {
+                msg = "Exported to " + written.get(0).getAbsolutePath();
+            } else {
+                StringBuilder sb = new StringBuilder(
+                        "Exported " + written.size() + " board files:\n");
+                for (File f : written) {
+                    sb.append("  ").append(f.getName()).append('\n');
+                }
+                msg = sb.toString().trim();
+            }
+            JOptionPane.showMessageDialog(parent, msg,
                     "Lasercut Export",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (Exception e) {

@@ -51,6 +51,14 @@ public class ExportOptions {
      */
     public boolean splitFloor = false;
 
+    /**
+     * When true and both {@link #boardWidth} and {@link #boardHeight} are set,
+     * write one SVG file per board (named {@code <base>-board1.svg},
+     * {@code <base>-board2.svg}, …) instead of a single combined SVG that shows
+     * all boards with outline rectangles.
+     */
+    public boolean separateFilesPerBoard = false;
+
     /** Stroke width of cut lines in the SVG, in mm (0 for hairline). */
     public double svgStrokeWidth = 0.1;
 

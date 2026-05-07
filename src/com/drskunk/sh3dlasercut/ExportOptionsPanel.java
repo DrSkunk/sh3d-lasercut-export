@@ -51,6 +51,9 @@ public final class ExportOptionsPanel {
         final JCheckBox  splitFloorBox    = new JCheckBox(
                 "Split floor with puzzle joints if too large",
                 defaults.splitFloor);
+        final JCheckBox  separateFilesBox = new JCheckBox(
+                "Write one SVG file per board (requires board dimensions)",
+                defaults.separateFilesPerBoard);
 
         final Color[] colorHolder = { defaults.cutStrokeColor != null ? defaults.cutStrokeColor : Color.RED };
         final JButton colorButton = new JButton();
@@ -69,7 +72,7 @@ public final class ExportOptionsPanel {
                 ExportOptions tentative = readOptions(
                         scaleField, thicknessField, tabWidthField,
                         marginField, spacingField, strokeField, smoothBox, colorHolder[0],
-                        boardWidthField, boardHeightField, splitFloorBox);
+                        boardWidthField, boardHeightField, splitFloorBox, separateFilesBox);
                 LayoutResult layout = new LasercutExporter(home, tentative).buildLayout();
                 preview.setLayout(layout, tentative.cutStrokeColor);
                 if (layout.boardWarning != null) {
@@ -104,6 +107,7 @@ public final class ExportOptionsPanel {
         boardWidthField.getDocument().addDocumentListener(live);
         boardHeightField.getDocument().addDocumentListener(live);
         splitFloorBox.addActionListener(e -> refresh.run());
+        separateFilesBox.addActionListener(e -> refresh.run());
         colorButton.addActionListener(e -> {
             Color picked = JColorChooser.showDialog(colorButton, "Cut stroke color", colorHolder[0]);
             if (picked != null) {
@@ -136,6 +140,9 @@ public final class ExportOptionsPanel {
 
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         form.add(splitFloorBox, c);
+
+        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
+        form.add(separateFilesBox, c);
 
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         c.insets = new Insets(10, 6, 2, 6);
@@ -171,7 +178,7 @@ public final class ExportOptionsPanel {
         try {
             return readOptions(scaleField, thicknessField, tabWidthField,
                     marginField, spacingField, strokeField, smoothBox, colorHolder[0],
-                    boardWidthField, boardHeightField, splitFloorBox);
+                    boardWidthField, boardHeightField, splitFloorBox, separateFilesBox);
         } catch (RuntimeException e) {
             JOptionPane.showMessageDialog(parent, e.getMessage(),
                     "Invalid input", JOptionPane.ERROR_MESSAGE);
@@ -183,19 +190,21 @@ public final class ExportOptionsPanel {
             JTextField scaleField, JTextField thicknessField, JTextField tabWidthField,
             JTextField marginField, JTextField spacingField, JTextField strokeField,
             JCheckBox smoothBox, Color cutColor,
-            JTextField boardWidthField, JTextField boardHeightField, JCheckBox splitFloorBox) {
+            JTextField boardWidthField, JTextField boardHeightField,
+            JCheckBox splitFloorBox, JCheckBox separateFilesBox) {
         ExportOptions opts = new ExportOptions();
-        opts.scaleDivisor      = parsePositive(scaleField.getText(),      "Scale divisor");
-        opts.materialThickness = parsePositive(thicknessField.getText(),  "Material thickness");
-        opts.tabWidth          = parsePositive(tabWidthField.getText(),   "Finger width");
-        opts.floorMargin       = parseNonNegative(marginField.getText(),  "Floor margin");
-        opts.layoutSpacing     = parseNonNegative(spacingField.getText(), "Layout spacing");
-        opts.svgStrokeWidth    = parseNonNegative(strokeField.getText(),  "Stroke width");
-        opts.smoothConnections = smoothBox.isSelected();
-        opts.cutStrokeColor    = cutColor != null ? cutColor : Color.RED;
-        opts.boardWidth        = parseNonNegative(boardWidthField.getText(),  "Board width");
-        opts.boardHeight       = parseNonNegative(boardHeightField.getText(), "Board height");
-        opts.splitFloor        = splitFloorBox.isSelected();
+        opts.scaleDivisor         = parsePositive(scaleField.getText(),      "Scale divisor");
+        opts.materialThickness    = parsePositive(thicknessField.getText(),  "Material thickness");
+        opts.tabWidth             = parsePositive(tabWidthField.getText(),   "Finger width");
+        opts.floorMargin          = parseNonNegative(marginField.getText(),  "Floor margin");
+        opts.layoutSpacing        = parseNonNegative(spacingField.getText(), "Layout spacing");
+        opts.svgStrokeWidth       = parseNonNegative(strokeField.getText(),  "Stroke width");
+        opts.smoothConnections    = smoothBox.isSelected();
+        opts.cutStrokeColor       = cutColor != null ? cutColor : Color.RED;
+        opts.boardWidth           = parseNonNegative(boardWidthField.getText(),  "Board width");
+        opts.boardHeight          = parseNonNegative(boardHeightField.getText(), "Board height");
+        opts.splitFloor           = splitFloorBox.isSelected();
+        opts.separateFilesPerBoard = separateFilesBox.isSelected();
         return opts;
     }
 

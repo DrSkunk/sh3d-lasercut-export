@@ -41,12 +41,21 @@ public final class LasercutExporter {
         this.targetLevel = home.getSelectedLevel();
     }
 
-    public void export(File outputFile) throws IOException {
-        LayoutResult layout = buildLayout();
-        if (layout.shapes.isEmpty()) {
-            throw new IOException("No walls found on the selected level.");
+    public List<File> export(File outputFile) throws IOException {
+        if (options.separateFilesPerBoard && options.boardWidth > 0 && options.boardHeight > 0) {
+            List<LayoutResult> boards = buildBoardLayouts();
+            if (boards.isEmpty() || boards.get(0).shapes.isEmpty()) {
+                throw new IOException("No walls found on the selected level.");
+            }
+            return writeBoardFiles(outputFile, boards);
+        } else {
+            LayoutResult layout = buildLayout();
+            if (layout.shapes.isEmpty()) {
+                throw new IOException("No walls found on the selected level.");
+            }
+            writeSvg(outputFile, layout);
+            return Collections.singletonList(outputFile);
         }
-        writeSvg(outputFile, layout);
     }
 
     /**
@@ -70,8 +79,41 @@ public final class LasercutExporter {
         LayoutResult result = new LayoutResult();
         int[] gridSize = { 1, 1 }; // [numCols, numRows] of floor tile grid
         List<FloorPiece> floorTiles = buildFloorTiles(walls, pieces, result, gridSize);
-        composeLayout(pieces, floorTiles, gridSize[0], result);
+
+        if (options.boardWidth > 0 && options.boardHeight > 0) {
+            List<BoardItem> items = gatherItems(walls, pieces, floorTiles);
+            List<LayoutResult> boards = packOntoBoards(items);
+            buildCombinedLayout(boards, result);
+        } else {
+            composeLayout(pieces, floorTiles, gridSize[0], result);
+        }
         return result;
+    }
+
+    /**
+     * Build per-board layouts for separate-file export.
+     * Each returned result contains the pieces assigned to one board, in
+     * board-local (0,0) coordinates.  Returns a single-element list when
+     * board constraints are not set (all pieces on one unlimited "board").
+     */
+    public List<LayoutResult> buildBoardLayouts() {
+        List<Wall> walls = collectWalls(home, targetLevel);
+        if (walls.isEmpty()) {
+            return Collections.singletonList(new LayoutResult());
+        }
+        Set<Wall> wallSet = new HashSet<>(walls);
+
+        Map<Wall, WallPiece> pieces = new LinkedHashMap<>();
+        int idx = 1;
+        for (Wall w : walls) {
+            pieces.put(w, buildWallPiece(w, wallSet, idx++));
+        }
+
+        LayoutResult dummy = new LayoutResult(); // boardWarning not needed here
+        int[] gridSize = { 1, 1 };
+        List<FloorPiece> floorTiles = buildFloorTiles(walls, pieces, dummy, gridSize);
+        List<BoardItem> items = gatherItems(walls, pieces, floorTiles);
+        return packOntoBoards(items);
     }
 
     /** Gather model dimensions for the live size preview in the options dialog. */
@@ -613,6 +655,231 @@ public final class LasercutExporter {
     // ---- layout + write ------------------------------------------------------
 
     /**
+     * A piece (floor tile or wall) normalized to a local (0,0) origin, ready
+     * for board-packing.
+     */
+    private static final class BoardItem {
+        final List<List<double[]>> shapes;
+        final List<LayoutResult.Label> labels;
+        final double width;
+        final double height;
+
+        BoardItem(List<List<double[]>> shapes, List<LayoutResult.Label> labels,
+                  double width, double height) {
+            this.shapes = shapes;
+            this.labels = labels;
+            this.width  = width;
+            this.height = height;
+        }
+    }
+
+    /**
+     * Extract all pieces (floor tiles then walls) as board-packable
+     * {@link BoardItem}s, each normalized to a local (0,0) origin.
+     * Wall-identifier labels for the assembler are embedded into the
+     * appropriate floor-tile item.
+     */
+    private List<BoardItem> gatherItems(List<Wall> walls,
+                                         Map<Wall, WallPiece> pieces,
+                                         List<FloorPiece> floorTiles) {
+        double sf = scaleFactor();
+        int numTiles = floorTiles.size();
+        List<BoardItem> items = new ArrayList<>();
+
+        // ---- floor tiles ------------------------------------------------
+        for (int i = 0; i < numTiles; i++) {
+            FloorPiece tile = floorTiles.get(i);
+            double w = tile.bounds[2] - tile.bounds[0];
+            double h = tile.bounds[3] - tile.bounds[1];
+            double offX = -tile.bounds[0];
+            double offY = -tile.bounds[1];
+
+            List<List<double[]>> shapes = new ArrayList<>();
+            shapes.add(translated(tile.outline, offX, offY));
+            for (double[][] slot : tile.slots) {
+                shapes.add(translated(asPolygon(slot), offX, offY));
+            }
+
+            List<LayoutResult.Label> labels = new ArrayList<>();
+            String floorLabel = numTiles > 1
+                    ? "FLOOR " + (i + 1) + "/" + numTiles
+                    : "FLOOR";
+            labels.add(new LayoutResult.Label(floorLabel, 4, 8, 6));
+
+            // Wall midpoint labels on this floor tile.
+            for (Map.Entry<Wall, WallPiece> entry : pieces.entrySet()) {
+                Wall wall  = entry.getKey();
+                WallPiece piece = entry.getValue();
+                double sx = wall.getXStart() * CM_TO_MM * sf;
+                double sy = wall.getYStart() * CM_TO_MM * sf;
+                double ex = wall.getXEnd()   * CM_TO_MM * sf;
+                double ey = wall.getYEnd()   * CM_TO_MM * sf;
+                double midWX = (sx + ex) / 2.0;
+                double midWY = (sy + ey) / 2.0;
+                if (midWX >= tile.bounds[0] && midWX <= tile.bounds[2]
+                        && midWY >= tile.bounds[1] && midWY <= tile.bounds[3]) {
+                    labels.add(new LayoutResult.Label(
+                            piece.label, midWX + offX, midWY + offY, 4));
+                }
+            }
+
+            items.add(new BoardItem(shapes, labels, w, h));
+        }
+
+        // ---- walls -------------------------------------------------------
+        for (WallPiece piece : pieces.values()) {
+            double[] b = piece.bounds();
+            double w  = b[2] - b[0];
+            double h  = b[3] - b[1];
+            double offX = -b[0];
+            double offY = -b[1];
+
+            List<List<double[]>> shapes = new ArrayList<>();
+            shapes.add(translated(piece.outline(), offX, offY));
+            for (double[] cut : piece.cutouts) {
+                List<double[]> rect = new ArrayList<>(4);
+                rect.add(new double[] { cut[0] + offX, cut[1] + offY });
+                rect.add(new double[] { cut[2] + offX, cut[1] + offY });
+                rect.add(new double[] { cut[2] + offX, cut[3] + offY });
+                rect.add(new double[] { cut[0] + offX, cut[3] + offY });
+                shapes.add(rect);
+            }
+
+            List<LayoutResult.Label> labels = new ArrayList<>();
+            labels.add(new LayoutResult.Label(piece.label, 2, 8, 6));
+
+            items.add(new BoardItem(shapes, labels, w, h));
+        }
+
+        return items;
+    }
+
+    /**
+     * Pack items onto boards using a simple strip-packing algorithm.
+     *
+     * <p>When no board constraints are set (boardWidth or boardHeight ≤ 0),
+     * all items are placed on a single unlimited board using vertical stacking
+     * that matches the legacy layout order.  When board constraints are active,
+     * items are packed greedily onto {@code boardWidth × boardHeight} boards,
+     * starting a new row when the current row would overflow the board width
+     * and a new board when the current column of rows would overflow the board
+     * height.
+     *
+     * @return one {@link LayoutResult} per board; pieces in board-local coords
+     *         (origin = (0,0) in the usable area, before the spacing margin).
+     */
+    private List<LayoutResult> packOntoBoards(List<BoardItem> items) {
+        double spacing  = options.layoutSpacing;
+        double bw       = options.boardWidth;
+        double bh       = options.boardHeight;
+        boolean constrained = bw > 0 && bh > 0;
+        double usableW = constrained ? bw - 2 * spacing : Double.MAX_VALUE;
+        double usableH = constrained ? bh - 2 * spacing : Double.MAX_VALUE;
+
+        List<LayoutResult> boards = new ArrayList<>();
+        LayoutResult current = new LayoutResult();
+        boards.add(current);
+        double cursorX = 0;
+        double cursorY = 0;
+        double rowMaxH = 0;
+        double maxW    = 0;
+
+        for (BoardItem item : items) {
+            double pw = item.width;
+            double ph = item.height;
+
+            // Start a new row if this item doesn't fit horizontally.
+            if (cursorX > 0 && cursorX + pw > usableW + SEAM_TOLERANCE) {
+                double rowW = cursorX - spacing;
+                if (rowW > maxW) maxW = rowW;
+                cursorX = 0;
+                cursorY += rowMaxH + spacing;
+                rowMaxH = 0;
+            }
+
+            // Start a new board if this item doesn't fit vertically.
+            if (constrained && cursorY + ph > usableH + SEAM_TOLERANCE) {
+                double rowW = cursorX > 0 ? cursorX - spacing : 0;
+                if (rowW > maxW) maxW = rowW;
+                current.width  = maxW;
+                current.height = Math.max(0, cursorY + rowMaxH);
+                current = new LayoutResult();
+                boards.add(current);
+                cursorX = 0;
+                cursorY = 0;
+                rowMaxH = 0;
+                maxW    = 0;
+            }
+
+            // Place item at (cursorX, cursorY) on the current board.
+            for (List<double[]> shape : item.shapes) {
+                current.shapes.add(translated(shape, cursorX, cursorY));
+            }
+            for (LayoutResult.Label label : item.labels) {
+                current.labels.add(new LayoutResult.Label(
+                        label.text, label.x + cursorX, label.y + cursorY, label.size));
+            }
+
+            cursorX += pw + spacing;
+            if (ph > rowMaxH) rowMaxH = ph;
+        }
+
+        // Finalize last board.
+        double rowW = cursorX > 0 ? cursorX - spacing : 0;
+        if (rowW > maxW) maxW = rowW;
+        current.width  = maxW;
+        current.height = Math.max(0, cursorY + rowMaxH);
+
+        return boards;
+    }
+
+    /**
+     * Merge per-board results into a single combined {@link LayoutResult}.
+     *
+     * <p>Boards are stacked vertically with {@code layoutSpacing} between them.
+     * When board constraints are set, a board outline rectangle is added at
+     * each board's position (stored in {@link LayoutResult#boardRects}) and
+     * each board's content is inset by {@code layoutSpacing}.
+     */
+    private void buildCombinedLayout(List<LayoutResult> boards, LayoutResult result) {
+        double spacing    = options.layoutSpacing;
+        double bw         = options.boardWidth;
+        double bh         = options.boardHeight;
+        boolean constrained = bw > 0 && bh > 0;
+        double offsetY = 0;
+        double maxW    = 0;
+
+        for (LayoutResult board : boards) {
+            double displayW = constrained ? bw : board.width;
+            double displayH = constrained ? bh : board.height;
+
+            if (constrained) {
+                result.boardRects.add(new double[] { 0, offsetY, displayW, displayH });
+            }
+
+            // Items are placed at board-local coords starting at (0,0).
+            // In the combined view, shift them into the board's bounding box
+            // (with a spacing-sized margin when constrained).
+            double itemOffX = constrained ? spacing : 0;
+            double itemOffY = offsetY + (constrained ? spacing : 0);
+
+            for (List<double[]> shape : board.shapes) {
+                result.shapes.add(translated(shape, itemOffX, itemOffY));
+            }
+            for (LayoutResult.Label label : board.labels) {
+                result.labels.add(new LayoutResult.Label(
+                        label.text, label.x + itemOffX, label.y + itemOffY, label.size));
+            }
+
+            if (displayW > maxW) maxW = displayW;
+            offsetY += displayH + spacing;
+        }
+
+        result.width  = maxW;
+        result.height = Math.max(0, offsetY - spacing);
+    }
+
+    /**
      * Translate all pieces into their final SVG positions and store them in
      * {@code result}.
      *
@@ -725,6 +992,9 @@ public final class LasercutExporter {
 
     private void writeSvg(File outputFile, LayoutResult layout) throws IOException {
         SVGWriter svg = new SVGWriter(options.svgStrokeWidth, options.cutStrokeColor);
+        for (double[] r : layout.boardRects) {
+            svg.addBoardOutline(r[0], r[1], r[2], r[3]);
+        }
         for (List<double[]> shape : layout.shapes) {
             svg.addPolygon(shape, 0, 0);
         }
@@ -732,6 +1002,53 @@ public final class LasercutExporter {
             svg.addLabel(label.text, label.x, label.y, label.size);
         }
         svg.write(outputFile);
+    }
+
+    /**
+     * Write a single per-board SVG.  A board outline is drawn at (0,0) and
+     * items are inset by {@link ExportOptions#layoutSpacing}.
+     */
+    private void writeSvgBoard(File outputFile, LayoutResult boardLayout) throws IOException {
+        double bw      = options.boardWidth;
+        double bh      = options.boardHeight;
+        double spacing = options.layoutSpacing;
+
+        SVGWriter svg = new SVGWriter(options.svgStrokeWidth, options.cutStrokeColor);
+        svg.addBoardOutline(0, 0, bw, bh);
+        for (List<double[]> shape : boardLayout.shapes) {
+            svg.addPolygon(translated(shape, spacing, spacing), 0, 0);
+        }
+        for (LayoutResult.Label label : boardLayout.labels) {
+            svg.addLabel(label.text, label.x + spacing, label.y + spacing, label.size);
+        }
+        svg.write(outputFile);
+    }
+
+    /**
+     * Write one SVG file per board.
+     *
+     * <p>When there is more than one board the output filenames are
+     * {@code <base>-board1.svg}, {@code <base>-board2.svg}, etc.
+     * When there is exactly one board the {@code baseFile} name is used as-is.
+     *
+     * @return list of files actually written (in board order)
+     */
+    private List<File> writeBoardFiles(File baseFile, List<LayoutResult> boards) throws IOException {
+        String name = baseFile.getName();
+        if (name.toLowerCase(Locale.ROOT).endsWith(".svg")) {
+            name = name.substring(0, name.length() - 4);
+        }
+        File dir = baseFile.getParentFile();
+        if (dir == null) dir = new File(".");
+
+        List<File> written = new ArrayList<>(boards.size());
+        for (int i = 0; i < boards.size(); i++) {
+            String suffix = boards.size() > 1 ? "-board" + (i + 1) : "";
+            File boardFile = new File(dir, name + suffix + ".svg");
+            writeSvgBoard(boardFile, boards.get(i));
+            written.add(boardFile);
+        }
+        return written;
     }
 
     private static List<double[]> translated(List<double[]> pts, double dx, double dy) {
