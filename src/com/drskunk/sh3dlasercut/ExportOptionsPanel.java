@@ -30,6 +30,8 @@ import java.util.Locale;
  */
 public final class ExportOptionsPanel {
 
+    private static final Color WARNING_COLOR = new Color(0xCC6600);
+
     private ExportOptionsPanel() {}
 
     public static ExportOptions showDialog(Component parent, Home home, ExportOptions defaults) {
@@ -45,6 +47,14 @@ public final class ExportOptionsPanel {
         final JCheckBox  smoothBox      = new JCheckBox(
                 "Smooth connections -- no finger joints, glue pieces together",
                 defaults.smoothConnections);
+        final JTextField boardWidthField  = new JTextField(format(defaults.boardWidth), 8);
+        final JTextField boardHeightField = new JTextField(format(defaults.boardHeight), 8);
+        final JCheckBox  splitFloorBox    = new JCheckBox(
+                "Split floor with puzzle joints if too large",
+                defaults.splitFloor);
+        final JCheckBox  separateFilesBox = new JCheckBox(
+                "Write one SVG file per board (requires both board dimensions)",
+                defaults.separateFilesPerBoard);
 
         final String[] slopingItems = {
                 "Compensate (clip joints to actual height)",
@@ -71,15 +81,21 @@ public final class ExportOptionsPanel {
                 ExportOptions tentative = readOptions(
                         scaleField, thicknessField, tabWidthField,
                         marginField, spacingField, strokeField,
-                        smoothBox, slopingBox, colorHolder[0]);
+                        smoothBox, slopingBox, colorHolder[0],
+                        boardWidthField, boardHeightField, splitFloorBox, separateFilesBox);
                 LayoutResult layout = new LasercutExporter(home, tentative).buildLayout();
                 preview.setLayout(layout, tentative.cutStrokeColor);
-                double[] size = metrics.estimateOutputSize(tentative);
-                previewLabel.setForeground(Color.BLACK);
-                previewLabel.setText(String.format(Locale.US,
-                        "Estimated output: %.0f × %.0f mm   (1:%.0f scale)",
-                        size[0], size[1], tentative.scaleDivisor));
-            } catch (RuntimeException ex) {
+                if (layout.boardWarning != null) {
+                    previewLabel.setForeground(WARNING_COLOR);
+                    previewLabel.setText("[!] " + layout.boardWarning);
+                } else {
+                    double[] size = metrics.estimateOutputSize(tentative);
+                    previewLabel.setForeground(Color.BLACK);
+                    previewLabel.setText(String.format(Locale.US,
+                            "Estimated output: %.0f \u00d7 %.0f mm   (1:%.0f scale)",
+                            size[0], size[1], tentative.scaleDivisor));
+                }
+            } catch (Exception ex) {
                 preview.setEmpty("(invalid options)");
                 previewLabel.setForeground(new Color(0xAA0000));
                 previewLabel.setText("Estimated output: —");
@@ -99,6 +115,10 @@ public final class ExportOptionsPanel {
         strokeField.getDocument().addDocumentListener(live);
         smoothBox.addActionListener(e -> refresh.run());
         slopingBox.addActionListener(e -> refresh.run());
+        boardWidthField.getDocument().addDocumentListener(live);
+        boardHeightField.getDocument().addDocumentListener(live);
+        splitFloorBox.addActionListener(e -> refresh.run());
+        separateFilesBox.addActionListener(e -> refresh.run());
         colorButton.addActionListener(e -> {
             Color picked = JColorChooser.showDialog(colorButton, "Cut stroke color", colorHolder[0]);
             if (picked != null) {
@@ -126,14 +146,16 @@ public final class ExportOptionsPanel {
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         form.add(smoothBox, c);
 
-        c.gridx = 0; c.gridy = row; c.gridwidth = 1;
-        c.fill = GridBagConstraints.NONE;
-        c.insets = new Insets(4, 6, 4, 6);
-        form.add(new JLabel("Sloping walls:", SwingConstants.RIGHT), c);
-        c.gridx = 1;
-        c.fill = GridBagConstraints.HORIZONTAL;
-        form.add(slopingBox, c);
-        row++;
+        addRow(form, c, row++, "Sloping walls:", slopingBox);
+
+        addRow(form, c, row++, "Board width (mm, 0=no limit):", boardWidthField);
+        addRow(form, c, row++, "Board height (mm, 0=no limit):", boardHeightField);
+
+        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
+        form.add(splitFloorBox, c);
+
+        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
+        form.add(separateFilesBox, c);
 
         c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
         c.insets = new Insets(10, 6, 2, 6);
@@ -168,7 +190,9 @@ public final class ExportOptionsPanel {
 
         try {
             return readOptions(scaleField, thicknessField, tabWidthField,
-                    marginField, spacingField, strokeField, smoothBox, slopingBox, colorHolder[0]);
+                    marginField, spacingField, strokeField,
+                    smoothBox, slopingBox, colorHolder[0],
+                    boardWidthField, boardHeightField, splitFloorBox, separateFilesBox);
         } catch (RuntimeException e) {
             JOptionPane.showMessageDialog(parent, e.getMessage(),
                     "Invalid input", JOptionPane.ERROR_MESSAGE);
@@ -179,19 +203,25 @@ public final class ExportOptionsPanel {
     private static ExportOptions readOptions(
             JTextField scaleField, JTextField thicknessField, JTextField tabWidthField,
             JTextField marginField, JTextField spacingField, JTextField strokeField,
-            JCheckBox smoothBox, JComboBox<String> slopingBox, Color cutColor) {
+            JCheckBox smoothBox, JComboBox<String> slopingBox, Color cutColor,
+            JTextField boardWidthField, JTextField boardHeightField,
+            JCheckBox splitFloorBox, JCheckBox separateFilesBox) {
         ExportOptions opts = new ExportOptions();
-        opts.scaleDivisor      = parsePositive(scaleField.getText(),  "Scale divisor");
-        opts.materialThickness = parsePositive(thicknessField.getText(), "Material thickness");
-        opts.tabWidth          = parsePositive(tabWidthField.getText(),  "Finger width");
-        opts.floorMargin       = parseNonNegative(marginField.getText(), "Floor margin");
-        opts.layoutSpacing     = parseNonNegative(spacingField.getText(), "Layout spacing");
-        opts.svgStrokeWidth    = parseNonNegative(strokeField.getText(),  "Stroke width");
-        opts.smoothConnections = smoothBox.isSelected();
-        opts.slopingWallMode   = slopingBox.getSelectedIndex() == 1
+        opts.scaleDivisor          = parsePositive(scaleField.getText(),      "Scale divisor");
+        opts.materialThickness     = parsePositive(thicknessField.getText(),  "Material thickness");
+        opts.tabWidth              = parsePositive(tabWidthField.getText(),   "Finger width");
+        opts.floorMargin           = parseNonNegative(marginField.getText(),  "Floor margin");
+        opts.layoutSpacing         = parseNonNegative(spacingField.getText(), "Layout spacing");
+        opts.svgStrokeWidth        = parseNonNegative(strokeField.getText(),  "Stroke width");
+        opts.smoothConnections     = smoothBox.isSelected();
+        opts.slopingWallMode       = slopingBox.getSelectedIndex() == 1
                 ? ExportOptions.SlopingWallMode.SMOOTH
                 : ExportOptions.SlopingWallMode.COMPENSATE;
-        opts.cutStrokeColor    = cutColor != null ? cutColor : Color.RED;
+        opts.cutStrokeColor        = cutColor != null ? cutColor : Color.RED;
+        opts.boardWidth            = parseNonNegative(boardWidthField.getText(),  "Board width");
+        opts.boardHeight           = parseNonNegative(boardHeightField.getText(), "Board height");
+        opts.splitFloor            = splitFloorBox.isSelected();
+        opts.separateFilesPerBoard = separateFilesBox.isSelected();
         return opts;
     }
 

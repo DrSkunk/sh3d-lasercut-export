@@ -64,6 +64,34 @@ public class ExportOptions {
      */
     public SlopingWallMode slopingWallMode = SlopingWallMode.COMPENSATE;
 
+    /**
+     * Physical width of the laser-cutting board in mm (0 = no constraint).
+     * If the floor baseplate is wider than this value, a warning is shown and
+     * (when {@link #splitFloor} is true) the floor is split into tiles.
+     */
+    public double boardWidth = 0.0;
+
+    /**
+     * Physical height of the laser-cutting board in mm (0 = no constraint).
+     */
+    public double boardHeight = 0.0;
+
+    /**
+     * When the floor baseplate does not fit on the specified board, split it
+     * automatically into interlocking tiles using box-joint style seams.
+     * Has no effect when both {@link #boardWidth} and {@link #boardHeight}
+     * are zero or the floor already fits on a single board.
+     */
+    public boolean splitFloor = false;
+
+    /**
+     * When true and both {@link #boardWidth} and {@link #boardHeight} are set,
+     * write one SVG file per board (named {@code <base>-board1.svg},
+     * {@code <base>-board2.svg}, …) instead of a single combined SVG that shows
+     * all boards with outline rectangles.
+     */
+    public boolean separateFilesPerBoard = false;
+
     /** Stroke width of cut lines in the SVG, in mm (0 for hairline). */
     public double svgStrokeWidth = 0.1;
 

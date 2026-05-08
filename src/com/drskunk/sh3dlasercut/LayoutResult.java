@@ -19,6 +19,21 @@ public final class LayoutResult {
     public double width;
     public double height;
 
+    /**
+     * Non-null when the floor baseplate does not fit within the specified
+     * board size and automatic splitting has not been requested. The string
+     * is a human-readable warning message suitable for display in the UI.
+     */
+    public String boardWarning = null;
+
+    /**
+     * Board outline rectangles in layout coordinates, populated when both
+     * {@code boardWidth} and {@code boardHeight} are set.
+     * Each entry is {@code {x, y, w, h}}.  Used by the preview panel to draw
+     * board boundaries and by the SVG writer to emit board outline paths.
+     */
+    public final List<double[]> boardRects = new ArrayList<>();
+
     public static final class Label {
         public final String text;
         public final double x, y, size;

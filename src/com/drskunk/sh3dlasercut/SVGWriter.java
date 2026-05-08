@@ -72,6 +72,17 @@ public final class SVGWriter {
         addPolygon(list, offsetX, offsetY);
     }
 
+    /** Emit a board outline rectangle (light gray, dashed). */
+    public void addBoardOutline(double x, double y, double w, double h) {
+        bodyElements.add(String.format(Locale.US,
+                "<rect x=\"%s\" y=\"%s\" width=\"%s\" height=\"%s\" "
+                        + "stroke=\"#CCCCCC\" stroke-width=\"0.5\" "
+                        + "stroke-dasharray=\"2 2\" fill=\"none\" />",
+                fmt(x), fmt(y), fmt(w), fmt(h)));
+        updateBounds(x, y);
+        updateBounds(x + w, y + h);
+    }
+
     /** Light-gray label, intended for engraving or cosmetic identification. */
     public void addLabel(String text, double x, double y, double sizeMm) {
         bodyElements.add(String.format(Locale.US,

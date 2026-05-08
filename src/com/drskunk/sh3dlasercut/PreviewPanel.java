@@ -60,7 +60,7 @@ public final class PreviewPanel extends JComponent {
                 return;
             }
 
-            // Bounds of the entire layout in mm.
+            // Determine layout bounds from shapes AND board rects.
             double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY;
             double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
             for (List<double[]> shape : layout.shapes) {
@@ -70,6 +70,12 @@ public final class PreviewPanel extends JComponent {
                     if (p[0] > maxX) maxX = p[0];
                     if (p[1] > maxY) maxY = p[1];
                 }
+            }
+            for (double[] r : layout.boardRects) {
+                if (r[0]        < minX) minX = r[0];
+                if (r[1]        < minY) minY = r[1];
+                if (r[0] + r[2] > maxX) maxX = r[0] + r[2];
+                if (r[1] + r[3] > maxY) maxY = r[1] + r[3];
             }
             double bw = Math.max(1e-6, maxX - minX);
             double bh = Math.max(1e-6, maxY - minY);
@@ -81,14 +87,28 @@ public final class PreviewPanel extends JComponent {
             double offX = PADDING + (availW - bw * scale) / 2.0 - minX * scale;
             double offY = PADDING + (availH - bh * scale) / 2.0 - minY * scale;
 
-            // Faint sheet outline for visual context.
+            // Board outlines (dashed light gray) when board dimensions are set,
+            // falling back to a single sheet outline for visual context.
             g2.setColor(SHEET_OUTLINE);
-            g2.setStroke(new BasicStroke(1.0f));
-            g2.drawRect(
-                    (int) Math.round(minX * scale + offX),
-                    (int) Math.round(minY * scale + offY),
-                    (int) Math.round(bw * scale),
-                    (int) Math.round(bh * scale));
+            if (!layout.boardRects.isEmpty()) {
+                float[] dash = { 4f, 4f };
+                g2.setStroke(new BasicStroke(1.0f, BasicStroke.CAP_BUTT,
+                        BasicStroke.JOIN_MITER, 10f, dash, 0f));
+                for (double[] r : layout.boardRects) {
+                    int rx = (int) Math.round(r[0] * scale + offX);
+                    int ry = (int) Math.round(r[1] * scale + offY);
+                    int rw = (int) Math.round(r[2] * scale);
+                    int rh = (int) Math.round(r[3] * scale);
+                    g2.drawRect(rx, ry, rw, rh);
+                }
+            } else {
+                g2.setStroke(new BasicStroke(1.0f));
+                g2.drawRect(
+                        (int) Math.round(minX * scale + offX),
+                        (int) Math.round(minY * scale + offY),
+                        (int) Math.round(bw * scale),
+                        (int) Math.round(bh * scale));
+            }
 
             // Cut paths in the chosen stroke color.
             g2.setColor(strokeColor);
@@ -113,8 +133,16 @@ public final class PreviewPanel extends JComponent {
             // Dimension readout along the bottom.
             g2.setColor(INFO_TEXT);
             g2.setFont(g2.getFont().deriveFont(11f));
-            String text = String.format(Locale.US,
-                    "%.0f × %.0f mm   (%d shapes)", bw, bh, layout.shapes.size());
+            String text;
+            if (!layout.boardRects.isEmpty()) {
+                text = String.format(Locale.US,
+                        "%.0f \u00d7 %.0f mm   (%d shapes, %d board%s)",
+                        bw, bh, layout.shapes.size(),
+                        layout.boardRects.size(), layout.boardRects.size() == 1 ? "" : "s");
+            } else {
+                text = String.format(Locale.US,
+                        "%.0f \u00d7 %.0f mm   (%d shapes)", bw, bh, layout.shapes.size());
+            }
             g2.drawString(text, PADDING, getHeight() - PADDING / 2);
         } finally {
             g2.dispose();
