@@ -45,7 +45,7 @@ public final class ExportOptionsPanel {
         final JTextField spacingField   = new JTextField(format(defaults.layoutSpacing), 8);
         final JTextField strokeField    = new JTextField(format(defaults.svgStrokeWidth), 8);
         final JCheckBox  smoothBox      = new JCheckBox(
-                "Smooth wall-to-wall connections (only floor connects to walls)",
+                "Smooth connections -- no finger joints, glue pieces together",
                 defaults.smoothConnections);
         final JTextField boardWidthField  = new JTextField(format(defaults.boardWidth), 8);
         final JTextField boardHeightField = new JTextField(format(defaults.boardHeight), 8);

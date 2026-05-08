@@ -44,9 +44,11 @@ public class ExportOptions {
     public double layoutSpacing = 10.0;
 
     /**
-     * If true, walls do not interlock with each other — only with the floor.
-     * Wall-to-wall edges are rendered as straight cuts, suitable for gluing
-     * or other smooth corner treatments.
+     * If true, no finger joints are generated anywhere — neither wall-to-wall
+     * nor wall-to-floor.  Wall panels are plain rectangles (or trapezoids for
+     * sloping walls) and the floor plate is a plain outline with no slots.
+     * Pieces are intended to be assembled with glue or snap-fit rather than
+     * interlocking tabs.
      */
     public boolean smoothConnections = false;
 
