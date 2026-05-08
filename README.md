@@ -1,9 +1,9 @@
 # Sweet Home 3D Laser Cut Export Plugin
 
 A Sweet Home 3D plugin that exports a level as an SVG file ready for laser
-cutting. Walls become rectangular pieces with box-joint fingers on the
-bottom edge that slot into the floor plate. Optionally, walls also receive
-finger joints where they meet other walls.
+cutting. Walls become interlocking pieces with box-joint fingers on the
+bottom edge that slot into the floor plate, with optional finger joints where
+walls meet each other.
 
 You go from this:
 
@@ -23,11 +23,29 @@ To this:
 - Doors and windows are cut out of their host wall as rectangular openings
   sized and positioned to match the model. Doors that reach the floor also
   remove any bottom fingers that would dangle in the opening.
-- Optional **smooth wall connections**: walls don't interlock with each other,
-  only with the floor (useful when corners will be glued or trimmed).
-- Live preview of the cut layout in the options dialog with adjustable scale,
-  configurable cut stroke color (default `#FF0000`), and on-the-fly size
-  estimate.
+- **Sloping wall support**: walls with different start and end heights get a
+  diagonal top edge. Where a sloping wall meets another wall you can choose
+  between **Compensate** (tabs clipped to the shorter height so they always
+  fit) and **Smooth** (no tabs on the sloping end, glue/trim instead).
+- **T-junction notches**: when a wall butts into the face of another wall the
+  receiving wall gets matching slots so both pieces interlock.
+- **Wall placement guides**: gray reference outlines on the floor plate show
+  exactly where each wall sits, making assembly easier.
+- Optional **smooth wall connections**: walls have straight vertical edges and
+  only the floor holds them in place (useful when corners will be glued or
+  trimmed rather than interlocked).
+- **Board size layout**: set a physical board size and the exporter
+  automatically packs all pieces onto as many boards as needed using a
+  MaxRects bin-packing algorithm. Pieces are rotated 90° when that produces
+  a better fit. Each board is written to its own SVG file
+  (`<name>-board1.svg`, `<name>-board2.svg`, …). When no board size is set
+  all pieces land in a single file.
+- **Locking seam tabs**: when the floor plate spans multiple boards the seam
+  between tiles uses a dovetail puzzle-piece profile so assembled tiles can't
+  be pulled apart sideways.
+- Live preview of the cut layout in the options dialog, including board
+  boundaries, piece count, and board dimensions.
+- Configurable cut stroke color (default `#FF0000`) and SVG stroke width.
 
 ## Install
 
@@ -48,13 +66,12 @@ Alternatively, drop the `.sh3p` file into Sweet Home 3D's `plugins` folder:
 1. Select the level you want to export.
 2. **Tools → Export to lasercut SVG…**
 3. In the dialog, set:
-   - **Scale 1:N**: divides the model down to a sheet-sized cut. A 5 m wall
-     at 1:50 becomes 100 mm. The dialog shows a live "Estimated output:
-     W × H mm" preview that updates as you type.
+   - **Scale 1:N**: divides the model down to sheet size. A 5 m wall at 1:50
+     becomes 100 mm. The live preview updates as you type.
    - **Material thickness (mm)**: the consolidated thickness of every wall
      and the floor. All wall thicknesses in the model are ignored; the
      exporter assumes a uniform sheet. _Not affected by scale_: this is the
-     real thickness of the sheet you're cutting.
+     real physical thickness of the sheet you're cutting.
    - **Box-joint finger width (mm)**: target width of each finger / slot.
      The actual width is rounded so an odd number of equal segments fits the
      edge exactly.
@@ -63,9 +80,16 @@ Alternatively, drop the `.sh3p` file into Sweet Home 3D's `plugins` folder:
    - **Layout spacing (mm)**: gap between pieces in the SVG layout.
    - **SVG stroke width (mm)**: line weight; use a small value like `0.1`
      for hairline cuts.
+   - **Stroke color**: the cut line color written into the SVG (default red).
+   - **Board width / Board height (mm)**: physical dimensions of your laser
+     bed. Leave blank to output all pieces in a single unbounded file.
+   - **Separate file per board**: when board dimensions are set, write one
+     SVG per board instead of one combined file.
+   - **Sloping wall mode** _(Compensate / Smooth)_: controls how tab height
+     is handled where a sloping wall meets another wall.
    - **Smooth wall-to-wall connections**: when checked, walls have straight
      vertical edges and only the floor holds them in place.
-4. Pick an output `.svg` file.
+4. Pick an output `.svg` file and click **Export**.
 
 ## How the geometry works
 
@@ -73,29 +97,35 @@ Sweet Home 3D walls are consolidated to one thickness `T` and laid flat:
 
 - Each wall is a rectangle of `length × height` with **fingers protruding
   downward** by `T` at regular intervals along the bottom edge.
-- The floor is a single rectangle covering all walls, with **rectangular slots
-  cut through it** in the world-coordinate position of each wall's footprint.
-  The slots match the wall's bottom-finger pattern exactly, so each finger
-  passes through the floor.
+- Sloping walls (different start and end heights) get a trapezoidal outline
+  with a diagonal top edge.
+- The floor plate covers all wall footprints. **Rectangular slots** are cut
+  through it at each wall's world-coordinate position; the slots match the
+  wall finger pattern exactly so each finger passes through the floor.
 - When two walls share an endpoint and _Smooth wall-to-wall connections_ is
   off, both walls receive complementary finger patterns on their meeting
   edges. The finger of one wall fits into the gap of the other.
-- Polarity (which wall gets gap-first vs. tab-first) is decided by
-  `System.identityHashCode` order, which is stable within a session.
+- At T-junctions (one wall butting into the face of another) the receiving
+  wall gets notch slots that accept the butting wall's fingers.
+- Polarity (which wall gets gap-first vs. tab-first at a shared corner) is
+  decided by `System.identityHashCode` order, which is stable within a
+  session.
+- When board dimensions are set, pieces are arranged with **MaxRects BSSF**
+  (Best Short Side Fit) bin packing. Each piece is tried in its natural
+  orientation and rotated 90°; whichever fits more tightly is used. When
+  the floor plate spans a board boundary it is split into tiles joined by
+  dovetail puzzle-piece tabs.
 
 ## Limitations
 
 - Only straight walls are supported (arc walls are treated as straight from
   start to end).
-- All walls are assumed to share the level height. Walls with explicit per-
-  wall heights are emitted at that height, but joints assume matching
-  heights at corners.
-- The floor outline is a bounding rectangle of all wall footprints. Curved
-  or stepped floor outlines aren't generated.
 - Non-90° corners are not specially handled; finger joints assume
   perpendicular meetings. Acute / obtuse corners may need post-processing.
 - Kerf compensation is not applied. Shrink / expand fingers in your CAM
   workflow if your laser has noticeable kerf.
+- The floor outline follows the wall footprints; complex concave room shapes
+  may produce an oversized floor plate.
 
 ## License
 
