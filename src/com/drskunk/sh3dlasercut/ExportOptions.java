@@ -3,6 +3,25 @@ package com.drskunk.sh3dlasercut;
 import java.awt.Color;
 
 public class ExportOptions {
+
+    /**
+     * How connections between sloping walls (walls whose height differs at the
+     * two ends) and their neighbours are treated.
+     */
+    public enum SlopingWallMode {
+        /**
+         * No finger joints are generated at any end of a sloping wall, nor at
+         * any end of a wall that connects to a sloping wall.  Those edges are
+         * rendered as straight cuts and are suitable for gluing.
+         */
+        SMOOTH,
+        /**
+         * Finger joints are generated normally but are clipped to the actual
+         * physical height at the junction (the minimum of the two walls' heights
+         * at that end).  The sloping wall panel is rendered as a trapezoid.
+         */
+        COMPENSATE
+    }
     /**
      * Scale divisor: 1:N where N is this value. The model is shrunk by this
      * factor in the SVG. E.g. a 5 m wall at scaleDivisor=50 becomes 100 mm.
@@ -30,6 +49,18 @@ public class ExportOptions {
      * or other smooth corner treatments.
      */
     public boolean smoothConnections = false;
+
+    /**
+     * Controls how connections involving sloping walls (walls whose height
+     * differs at the two ends) are exported.
+     * <ul>
+     *   <li>{@link SlopingWallMode#SMOOTH} – no finger joints on any end
+     *       that belongs to, or touches, a sloping wall.</li>
+     *   <li>{@link SlopingWallMode#COMPENSATE} – finger joints are clipped
+     *       to the actual height at the junction; the panel is trapezoidal.</li>
+     * </ul>
+     */
+    public SlopingWallMode slopingWallMode = SlopingWallMode.COMPENSATE;
 
     /**
      * Physical width of the laser-cutting board in mm (0 = no constraint).
