@@ -8,6 +8,7 @@ import com.eteks.sweethome3d.model.Wall;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -156,9 +157,17 @@ public final class LasercutExporter {
         double endOffset   = rightConnected ? thickness / 2.0 : 0;
         double length = rawWallLengthMm(wall) * sf - startOffset - endOffset;
 
-        // Bottom tabs always present.
-        // startsWithTab = false → corners are flat, slots sit cleanly inside the floor outline.
-        List<TabPattern.Span> bottomTabs = TabPattern.compute(length, tabWidth, false);
+        // Bottom tabs connect the wall panel to the floor plate.
+        // In smooth mode all connections are suppressed — the pieces are glued —
+        // so no tabs are needed and the floor plate stays plain.
+        // startsWithTab = false → corners are flat, slots sit cleanly inside the
+        // floor outline.
+        List<TabPattern.Span> bottomTabs;
+        if (options.smoothConnections) {
+            bottomTabs = Collections.emptyList();
+        } else {
+            bottomTabs = TabPattern.compute(length, tabWidth, false);
+        }
 
         // Door / window cutouts in panel-local coords (origin = panel x=0, which
         // is inset from the wall centre-line start by startOffset).
@@ -170,7 +179,9 @@ public final class LasercutExporter {
 
         // Drop bottom tabs that sit underneath a doorway — otherwise the tab
         // would be a detached strip dangling in the opening.
-        bottomTabs = filterBottomTabsByCutouts(bottomTabs, cutouts);
+        if (!bottomTabs.isEmpty()) {
+            bottomTabs = filterBottomTabsByCutouts(bottomTabs, cutouts);
+        }
 
         return new WallPiece(length, heightAtStart, heightAtEnd, thickness,
                 bottomTabs, leftTabs, rightTabs, cutouts, "W" + index);
