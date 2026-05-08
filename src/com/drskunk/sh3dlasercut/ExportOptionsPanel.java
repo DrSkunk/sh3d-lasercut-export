@@ -95,7 +95,7 @@ public final class ExportOptionsPanel {
                             "Estimated output: %.0f \u00d7 %.0f mm   (1:%.0f scale)",
                             size[0], size[1], tentative.scaleDivisor));
                 }
-            } catch (RuntimeException ex) {
+            } catch (Exception ex) {
                 preview.setEmpty("(invalid options)");
                 previewLabel.setForeground(new Color(0xAA0000));
                 previewLabel.setText("Estimated output: —");

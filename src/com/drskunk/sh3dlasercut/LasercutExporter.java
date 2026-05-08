@@ -71,7 +71,7 @@ public final class LasercutExporter {
      * without writing it to disk. Used both by {@link #export} and by the
      * options dialog's live preview.
      */
-    public LayoutResult buildLayout() {
+    public LayoutResult buildLayout() throws IOException {
         List<Wall> walls = collectWalls(home, targetLevel);
         if (walls.isEmpty()) {
             return new LayoutResult();
@@ -105,7 +105,7 @@ public final class LasercutExporter {
      * board-local (0,0) coordinates.  Returns a single-element list when
      * board constraints are not set (all pieces on one unlimited "board").
      */
-    public List<LayoutResult> buildBoardLayouts() {
+    public List<LayoutResult> buildBoardLayouts() throws IOException {
         List<Wall> walls = collectWalls(home, targetLevel);
         if (walls.isEmpty()) {
             return Collections.singletonList(new LayoutResult());
@@ -957,13 +957,25 @@ public final class LasercutExporter {
      * @return one {@link LayoutResult} per board; pieces in board-local coords
      *         (origin = (0,0) in the usable area, before the spacing margin).
      */
-    private List<LayoutResult> packOntoBoards(List<BoardItem> items) {
+    private List<LayoutResult> packOntoBoards(List<BoardItem> items) throws IOException {
         double spacing  = options.layoutSpacing;
         double bw       = options.boardWidth;
         double bh       = options.boardHeight;
         boolean constrained = bw > 0 && bh > 0;
         double usableW = constrained ? bw - 2 * spacing : Double.MAX_VALUE;
         double usableH = constrained ? bh - 2 * spacing : Double.MAX_VALUE;
+
+        if (constrained) {
+            for (BoardItem item : items) {
+                if (item.width > usableW + SEAM_TOLERANCE || item.height > usableH + SEAM_TOLERANCE) {
+                    String label = item.labels.isEmpty() ? "?" : item.labels.get(0).text;
+                    throw new IOException(String.format(Locale.US,
+                            "Piece ‘%s’ (%.0f × %.0f mm) is larger than the board "
+                            + "usable area (%.0f × %.0f mm). Increase board size or reduce scale.",
+                            label, item.width, item.height, usableW, usableH));
+                }
+            }
+        }
 
         List<LayoutResult> boards = new ArrayList<>();
         LayoutResult current = new LayoutResult();
