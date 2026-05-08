@@ -8,6 +8,7 @@ import com.eteks.sweethome3d.model.Wall;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,6 +62,7 @@ public final class LasercutExporter {
         for (Wall w : walls) {
             pieces.put(w, buildWallPiece(w, wallSet, idx++));
         }
+        addTJunctionNotches(walls, wallSet, pieces);
         FloorPiece floor = buildFloorPiece(walls, pieces);
 
         return composeLayout(pieces, floor);
@@ -115,42 +117,84 @@ public final class LasercutExporter {
 
     private WallPiece buildWallPiece(Wall wall, Set<Wall> levelWalls, int index) {
         double sf = scaleFactor();
-        double length = rawWallLengthMm(wall) * sf;
-        double height = rawWallHeightMm(wall, home) * sf;
+        double heightAtStart = rawWallHeightMm(wall, home) * sf;
+        double heightAtEnd   = rawWallEndHeightMm(wall, home) * sf;
+        boolean sloping = isSloping(wall, home);
         double thickness = options.materialThickness;
         double tabWidth = options.tabWidth;
 
-        // Bottom tabs always present.
-        // startsWithTab = false → corners are flat, slots sit cleanly inside the floor outline.
-        List<TabPattern.Span> bottomTabs = TabPattern.compute(length, tabWidth, false);
-
         List<TabPattern.Span> leftTabs = null;
         List<TabPattern.Span> rightTabs = null;
+        boolean leftConnected = false, rightConnected = false;
         if (!options.smoothConnections) {
             Wall startNeighbor = wall.getWallAtStart();
-            if (startNeighbor != null && levelWalls.contains(startNeighbor)) {
+            boolean skipStart = startNeighbor != null
+                    && (sloping || isSloping(startNeighbor, home))
+                    && options.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH;
+            if (!skipStart && startNeighbor != null && levelWalls.contains(startNeighbor)) {
+                leftConnected = true;
                 boolean primary = isPrimary(wall, startNeighbor);
-                leftTabs = TabPattern.compute(height, tabWidth, !primary);
+                double jointH = computeJointHeightScaled(wall, true, startNeighbor, sf);
+                leftTabs = TabPattern.compute(jointH, tabWidth, !primary);
             }
             Wall endNeighbor = wall.getWallAtEnd();
-            if (endNeighbor != null && levelWalls.contains(endNeighbor)) {
+            boolean skipEnd = endNeighbor != null
+                    && (sloping || isSloping(endNeighbor, home))
+                    && options.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH;
+            if (!skipEnd && endNeighbor != null && levelWalls.contains(endNeighbor)) {
+                rightConnected = true;
                 boolean primary = isPrimary(wall, endNeighbor);
-                rightTabs = TabPattern.compute(height, tabWidth, !primary);
+                double jointH = computeJointHeightScaled(wall, false, endNeighbor, sf);
+                rightTabs = TabPattern.compute(jointH, tabWidth, !primary);
             }
         }
 
-        // Door / window cutouts (in scaled wall-local coords).
-        List<double[]> cutouts = findCutouts(wall, sf, length, height);
+        // Each connected end is inset by half the material thickness so that the
+        // finger tabs protrude from the adjacent wall's inner face to its outer
+        // face (spanning exactly one material thickness), rather than from the
+        // wall's centre-line (which would overshoot by t/2).
+        double startOffset = leftConnected  ? thickness / 2.0 : 0;
+        double endOffset   = rightConnected ? thickness / 2.0 : 0;
+        double length = rawWallLengthMm(wall) * sf - startOffset - endOffset;
+
+        // Bottom tabs connect the wall panel to the floor plate.
+        // In smooth mode all connections are suppressed — the pieces are glued —
+        // so no tabs are needed and the floor plate stays plain.
+        // startsWithTab = false → corners are flat, slots sit cleanly inside the
+        // floor outline.
+        List<TabPattern.Span> bottomTabs;
+        if (options.smoothConnections) {
+            bottomTabs = Collections.emptyList();
+        } else {
+            bottomTabs = TabPattern.compute(length, tabWidth, false);
+        }
+
+        // Door / window cutouts in panel-local coords (origin = panel x=0, which
+        // is inset from the wall centre-line start by startOffset).
+        // For sloping walls use the taller of the two end heights as the clamp so
+        // that cutouts spanning the full height of either end are not incorrectly
+        // truncated.
+        double maxHeight = Math.max(heightAtStart, heightAtEnd);
+        List<double[]> cutouts = findCutouts(wall, sf, length, maxHeight, startOffset);
 
         // Drop bottom tabs that sit underneath a doorway — otherwise the tab
         // would be a detached strip dangling in the opening.
-        bottomTabs = filterBottomTabsByCutouts(bottomTabs, cutouts);
+        if (!bottomTabs.isEmpty()) {
+            bottomTabs = filterBottomTabsByCutouts(bottomTabs, cutouts);
+        }
 
-        return new WallPiece(length, height, thickness, bottomTabs, leftTabs, rightTabs,
-                cutouts, "W" + index);
+        return new WallPiece(length, heightAtStart, heightAtEnd, thickness,
+                bottomTabs, leftTabs, rightTabs, cutouts, "W" + index);
     }
 
-    private List<double[]> findCutouts(Wall wall, double sf, double scaledLength, double scaledHeight) {
+    /**
+     * @param startOffset distance (in scaled mm) from the wall centre-line start
+     *                    to the panel's local x=0.  Non-zero when the start end of
+     *                    the wall has a finger-joint connection and the panel is
+     *                    inset by half a material thickness.
+     */
+    private List<double[]> findCutouts(Wall wall, double sf, double scaledLength,
+                                       double scaledHeight, double startOffset) {
         List<double[]> cutouts = new ArrayList<>();
         if (home.getFurniture() == null) return cutouts;
 
@@ -191,8 +235,11 @@ public final class LasercutExporter {
                 if (a > maxAlongCm) maxAlongCm = a;
             }
 
-            double xMin = minAlongCm * CM_TO_MM * sf;
-            double xMax = maxAlongCm * CM_TO_MM * sf;
+            // Convert to panel-local x coordinates: subtract startOffset so that
+            // x=0 corresponds to the panel's left edge (inset from the centre-line
+            // start), not to the wall centre-line start.
+            double xMin = minAlongCm * CM_TO_MM * sf - startOffset;
+            double xMax = maxAlongCm * CM_TO_MM * sf - startOffset;
             double yMin = p.getElevation() * CM_TO_MM * sf;
             double yMax = (p.getElevation() + p.getHeight()) * CM_TO_MM * sf;
 
@@ -229,6 +276,9 @@ public final class LasercutExporter {
         return System.identityHashCode(self) < System.identityHashCode(other);
     }
 
+    /** Minimum height difference (mm) for a wall to be considered sloping. */
+    private static final double SLOPING_THRESHOLD_MM = 0.5;
+
     private static double rawWallLengthMm(Wall wall) {
         double dx = (wall.getXEnd() - wall.getXStart()) * CM_TO_MM;
         double dy = (wall.getYEnd() - wall.getYStart()) * CM_TO_MM;
@@ -247,7 +297,118 @@ public final class LasercutExporter {
         return home.getWallHeight() * CM_TO_MM;
     }
 
+    /** Height of the wall at its end point, in mm.  Returns the same value as
+     *  {@link #rawWallHeightMm} when the wall does not slope. */
+    private static double rawWallEndHeightMm(Wall wall, Home home) {
+        Float h = wall.getHeightAtEnd();
+        if (h != null) {
+            return h * CM_TO_MM;
+        }
+        return rawWallHeightMm(wall, home);
+    }
+
+    /** Returns true when the wall has a measurably different height at each end. */
+    private static boolean isSloping(Wall wall, Home home) {
+        return Math.abs(rawWallHeightMm(wall, home) - rawWallEndHeightMm(wall, home)) > SLOPING_THRESHOLD_MM;
+    }
+
+    /**
+     * Returns the scaled tab height to use at the joint between {@code wall}
+     * (at its start end when {@code atStart=true}, end end otherwise) and
+     * {@code neighbor}.  Uses the minimum of the two walls' heights at the
+     * junction so that the tab pattern fits within both panels.
+     */
+    private double computeJointHeightScaled(Wall wall, boolean atStart,
+                                            Wall neighbor, double sf) {
+        double selfH = atStart ? rawWallHeightMm(wall, home)
+                               : rawWallEndHeightMm(wall, home);
+        // Determine which end of the neighbor touches us.
+        boolean neighborAtStart = (neighbor.getWallAtStart() == wall);
+        double neighborH = neighborAtStart ? rawWallHeightMm(neighbor, home)
+                                           : rawWallEndHeightMm(neighbor, home);
+        return Math.min(selfH, neighborH) * sf;
+    }
+
     // ---- floor geometry ------------------------------------------------------
+
+    /**
+     * Second pass: for every T-junction (where an inner wall's endpoint meets the
+     * body of an outer wall, not at the outer wall's own endpoints), cut matching
+     * notch slots through the outer wall's face so that the inner wall's finger
+     * tabs have somewhere to fit.
+     *
+     * <p>Detection: wall B is a T-junction inner wall relative to outer wall A when
+     * {@code B.getWallAtStart() == A} (or {@code B.getWallAtEnd() == A}) AND
+     * neither {@code A.getWallAtStart()} nor {@code A.getWallAtEnd()} equals B.
+     * The latter condition distinguishes a T-junction from a regular corner where
+     * both walls mutually reference each other.</p>
+     */
+    private void addTJunctionNotches(List<Wall> walls, Set<Wall> wallSet,
+                                     Map<Wall, WallPiece> pieces) {
+        if (options.smoothConnections) return;
+        double sf = scaleFactor();
+        double t  = options.materialThickness;
+
+        for (Wall outer : walls) {
+            WallPiece outerPiece = pieces.get(outer);
+
+            double oxs = outer.getXStart();
+            double oys = outer.getYStart();
+            double oxe = outer.getXEnd();
+            double oye = outer.getYEnd();
+            double outerRawLen = Math.hypot(oxe - oxs, oye - oys);
+            if (outerRawLen <= 0) continue;
+            double ux = (oxe - oxs) / outerRawLen;
+            double uy = (oye - oys) / outerRawLen;
+
+            // Outer panel's x=0 is inset from its centre-line start whenever it
+            // has a left-edge finger-joint connection.
+            double outerStartOffset = (outerPiece.leftTabs != null) ? t / 2.0 : 0;
+
+            for (Wall inner : walls) {
+                if (inner == outer) continue;
+                if (!wallSet.contains(inner)) continue;
+
+                // T-junction: inner's start connects to outer's body.
+                boolean innerStartOnOuter =
+                        inner.getWallAtStart() == outer
+                        && outer.getWallAtStart() != inner
+                        && outer.getWallAtEnd()   != inner;
+
+                // T-junction: inner's end connects to outer's body.
+                boolean innerEndOnOuter =
+                        inner.getWallAtEnd() == outer
+                        && outer.getWallAtStart() != inner
+                        && outer.getWallAtEnd()   != inner;
+
+                if (!innerStartOnOuter && !innerEndOnOuter) continue;
+
+                WallPiece innerPiece = pieces.get(inner);
+                // The tabs on the inner wall's connecting edge are the ones that
+                // must pass through slots in the outer wall.
+                List<TabPattern.Span> innerEdgeTabs =
+                        innerStartOnOuter ? innerPiece.leftTabs : innerPiece.rightTabs;
+                if (innerEdgeTabs == null || innerEdgeTabs.isEmpty()) continue;
+
+                // Project the inner wall's connection point onto the outer wall's
+                // axis to get the along-wall coordinate in cm.
+                double cx = innerStartOnOuter ? inner.getXStart() : inner.getXEnd();
+                double cy = innerStartOnOuter ? inner.getYStart() : inner.getYEnd();
+                double alongCm = (cx - oxs) * ux + (cy - oys) * uy;
+
+                // Convert to outer panel-local x (subtract panel start offset).
+                double xCenter = alongCm * CM_TO_MM * sf - outerStartOffset;
+
+                double half = t / 2.0;
+                for (TabPattern.Span span : innerEdgeTabs) {
+                    outerPiece.cutouts.add(new double[] {
+                            xCenter - half, span.start,
+                            xCenter + half, span.end
+                    });
+                }
+            }
+        }
+    }
 
     private FloorPiece buildFloorPiece(List<Wall> walls, Map<Wall, WallPiece> pieces) {
         double sf = scaleFactor();
@@ -277,27 +438,39 @@ public final class LasercutExporter {
         double t = options.materialThickness;
         for (Wall wall : walls) {
             WallPiece piece = pieces.get(wall);
-            // Wall start/end in scaled world coords.
+            // Wall start/end in scaled world coords (centre-line endpoints).
             double sx = wall.getXStart() * CM_TO_MM * sf;
             double sy = wall.getYStart() * CM_TO_MM * sf;
-            double ex = wall.getXEnd() * CM_TO_MM * sf;
-            double ey = wall.getYEnd() * CM_TO_MM * sf;
-            double L = piece.length;
-            if (L <= 0) continue;
-            double dx = (ex - sx) / L;
-            double dy = (ey - sy) / L;
+            double ex = wall.getXEnd()   * CM_TO_MM * sf;
+            double ey = wall.getYEnd()   * CM_TO_MM * sf;
+            // Unit vector along the wall from the raw (centre-to-centre) distance.
+            // We must NOT divide by piece.length here because piece.length is the
+            // corrected panel length (shorter than the centre-to-centre distance
+            // whenever the wall has finger-joint connections at its ends).
+            double rawLen = Math.hypot(ex - sx, ey - sy);
+            if (rawLen <= 0) continue;
+            double dx = (ex - sx) / rawLen;
+            double dy = (ey - sy) / rawLen;
             double nx = -dy;
-            double ny = dx;
+            double ny =  dx;
+
+            // The panel's x=0 is inset from the centre-line start by half a
+            // material thickness whenever the start end has a finger-joint
+            // connection (piece.leftTabs != null).  Shift the slot origin to
+            // match the panel's physical starting position in world space.
+            double startOffset = (piece.leftTabs != null) ? t / 2.0 : 0;
+            double pSx = sx + dx * startOffset;
+            double pSy = sy + dy * startOffset;
 
             for (TabPattern.Span span : piece.bottomTabs) {
                 double a = span.start;
                 double b = span.end;
                 double half = t / 2.0;
                 double[][] rect = new double[][] {
-                        { sx + dx * a + nx * (-half), sy + dy * a + ny * (-half) },
-                        { sx + dx * b + nx * (-half), sy + dy * b + ny * (-half) },
-                        { sx + dx * b + nx * (+half), sy + dy * b + ny * (+half) },
-                        { sx + dx * a + nx * (+half), sy + dy * a + ny * (+half) },
+                        { pSx + dx * a + nx * (-half), pSy + dy * a + ny * (-half) },
+                        { pSx + dx * b + nx * (-half), pSy + dy * b + ny * (-half) },
+                        { pSx + dx * b + nx * (+half), pSy + dy * b + ny * (+half) },
+                        { pSx + dx * a + nx * (+half), pSy + dy * a + ny * (+half) },
                 };
                 slots.add(rect);
             }

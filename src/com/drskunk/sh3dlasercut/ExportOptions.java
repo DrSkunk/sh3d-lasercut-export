@@ -3,6 +3,25 @@ package com.drskunk.sh3dlasercut;
 import java.awt.Color;
 
 public class ExportOptions {
+
+    /**
+     * How connections between sloping walls (walls whose height differs at the
+     * two ends) and their neighbours are treated.
+     */
+    public enum SlopingWallMode {
+        /**
+         * No finger joints are generated at any end of a sloping wall, nor at
+         * any end of a wall that connects to a sloping wall.  Those edges are
+         * rendered as straight cuts and are suitable for gluing.
+         */
+        SMOOTH,
+        /**
+         * Finger joints are generated normally but are clipped to the actual
+         * physical height at the junction (the minimum of the two walls' heights
+         * at that end).  The sloping wall panel is rendered as a trapezoid.
+         */
+        COMPENSATE
+    }
     /**
      * Scale divisor: 1:N where N is this value. The model is shrunk by this
      * factor in the SVG. E.g. a 5 m wall at scaleDivisor=50 becomes 100 mm.
@@ -25,11 +44,25 @@ public class ExportOptions {
     public double layoutSpacing = 10.0;
 
     /**
-     * If true, walls do not interlock with each other — only with the floor.
-     * Wall-to-wall edges are rendered as straight cuts, suitable for gluing
-     * or other smooth corner treatments.
+     * If true, no finger joints are generated anywhere — neither wall-to-wall
+     * nor wall-to-floor.  Wall panels are plain rectangles (or trapezoids for
+     * sloping walls) and the floor plate is a plain outline with no slots.
+     * Pieces are intended to be assembled with glue or snap-fit rather than
+     * interlocking tabs.
      */
     public boolean smoothConnections = false;
+
+    /**
+     * Controls how connections involving sloping walls (walls whose height
+     * differs at the two ends) are exported.
+     * <ul>
+     *   <li>{@link SlopingWallMode#SMOOTH} – no finger joints on any end
+     *       that belongs to, or touches, a sloping wall.</li>
+     *   <li>{@link SlopingWallMode#COMPENSATE} – finger joints are clipped
+     *       to the actual height at the junction; the panel is trapezoidal.</li>
+     * </ul>
+     */
+    public SlopingWallMode slopingWallMode = SlopingWallMode.COMPENSATE;
 
     /** Stroke width of cut lines in the SVG, in mm (0 for hairline). */
     public double svgStrokeWidth = 0.1;
