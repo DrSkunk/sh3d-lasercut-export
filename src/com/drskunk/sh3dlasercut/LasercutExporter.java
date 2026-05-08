@@ -1076,26 +1076,31 @@ public final class LasercutExporter {
     }
 
     /**
-     * Pack items onto boards using a simple strip-packing algorithm.
+     * Pack items onto boards using the MaxRects algorithm with the Best Short
+     * Side Fit (BSSF) heuristic.
      *
-     * <p>When no board constraints are set (boardWidth or boardHeight ≤ 0),
-     * all items are placed on a single unlimited board using vertical stacking
-     * that matches the legacy layout order.  When board constraints are active,
-     * items are packed greedily onto {@code boardWidth × boardHeight} boards,
-     * starting a new row when the current row would overflow the board width
-     * and a new board when the current column of rows would overflow the board
-     * height.
+     * <p>Each board starts with one free rectangle covering its entire usable
+     * area.  For each item the algorithm picks the free rectangle that leaves
+     * the smallest shorter leftover dimension after placement, splits that
+     * rectangle into up to four new free rectangles covering the remaining
+     * space, then prunes any free rectangle that is fully contained within
+     * another.  When no free rectangle on the current board can fit the item a
+     * new board is opened.
+     *
+     * <p>Inter-item spacing is folded into each item’s effective packed size
+     * ({@code width + spacing} × {@code height + spacing}) so adjacent pieces
+     * are always at least {@code spacing} mm apart without explicit gap tracking.
      *
      * @return one {@link LayoutResult} per board; pieces in board-local coords
-     *         (origin = (0,0) in the usable area, before the spacing margin).
+     *         (origin = (0,0) in the usable area, before the outer spacing margin).
      */
     private List<LayoutResult> packOntoBoards(List<BoardItem> items) throws IOException {
-        double spacing  = options.layoutSpacing;
-        double bw       = options.boardWidth;
-        double bh       = options.boardHeight;
+        double spacing    = options.layoutSpacing;
+        double bw         = options.boardWidth;
+        double bh         = options.boardHeight;
         boolean constrained = bw > 0 && bh > 0;
-        double usableW = constrained ? bw - 2 * spacing : Double.MAX_VALUE;
-        double usableH = constrained ? bh - 2 * spacing : Double.MAX_VALUE;
+        double usableW = constrained ? bw - 2 * spacing : 1e9;
+        double usableH = constrained ? bh - 2 * spacing : 1e9;
 
         if (constrained) {
             if (usableW <= 0 || usableH <= 0) {
@@ -1106,80 +1111,154 @@ public final class LasercutExporter {
             }
             for (BoardItem item : items) {
                 if (item.width > usableW + SEAM_TOLERANCE || item.height > usableH + SEAM_TOLERANCE) {
-                    String label = item.labels.isEmpty() ? "?" : item.labels.get(0).text;
+                    String lbl = item.labels.isEmpty() ? "?" : item.labels.get(0).text;
                     throw new IOException(String.format(Locale.US,
                             "Piece ‘%s’ (%.0f × %.0f mm) is larger than the board "
                             + "usable area (%.0f × %.0f mm). Increase board size or reduce scale.",
-                            label, item.width, item.height, usableW, usableH));
+                            lbl, item.width, item.height, usableW, usableH));
                 }
             }
         }
 
-        // Sort largest-area items first so the strip-packer wastes less space.
+        // Sort largest-area first — good pre-processing for greedy bin-packing.
         List<BoardItem> sorted = new ArrayList<>(items);
         sorted.sort((a, b) -> Double.compare(b.width * b.height, a.width * a.height));
 
-        List<LayoutResult> boards = new ArrayList<>();
+        List<LayoutResult> boards  = new ArrayList<>();
+        List<double[]>     free    = new ArrayList<>();  // {x, y, w, h}
+        // Effective free area: +spacing so the last item’s inter-item gap fits.
+        free.add(new double[]{ 0, 0, usableW + spacing, usableH + spacing });
         LayoutResult current = new LayoutResult();
         boards.add(current);
-        double cursorX = 0;
-        double cursorY = 0;
-        double rowMaxH = 0;
-        double maxW    = 0;
+        double maxX = 0, maxY = 0;
 
         for (BoardItem item : sorted) {
-            double pw = item.width;
-            double ph = item.height;
+            double iw  = item.width  + spacing;  // effective packed width  (normal)
+            double ih  = item.height + spacing;  // effective packed height (normal)
+            double iwr = item.height + spacing;  // effective packed width  (rotated 90°)
+            double ihr = item.width  + spacing;  // effective packed height (rotated 90°)
+            boolean canRotate = Math.abs(iw - iwr) > SEAM_TOLERANCE; // skip if square
 
-            // Start a new row if this item doesn't fit horizontally.
-            // SEAM_TOLERANCE accounts for small floating-point accumulated errors
-            // in cursor positions so that items at precisely the board edge are
-            // not incorrectly wrapped to a new row.
-            if (cursorX > 0 && cursorX + pw > usableW + SEAM_TOLERANCE) {
-                double rowW = cursorX - spacing;
-                if (rowW > maxW) maxW = rowW;
-                cursorX = 0;
-                cursorY += rowMaxH + spacing;
-                rowMaxH = 0;
+            // Best Short Side Fit across both orientations.
+            int    bestIdx     = -1;
+            double bestScore   = Double.MAX_VALUE;
+            double bestX = 0, bestY = 0;
+            boolean bestRotated = false;
+            for (int i = 0; i < free.size(); i++) {
+                double[] r = free.get(i);
+                if (iw <= r[2] + SEAM_TOLERANCE && ih <= r[3] + SEAM_TOLERANCE) {
+                    double score = Math.min(r[2] - iw, r[3] - ih);
+                    if (score < bestScore) {
+                        bestScore = score; bestIdx = i;
+                        bestX = r[0]; bestY = r[1]; bestRotated = false;
+                    }
+                }
+                if (canRotate && iwr <= r[2] + SEAM_TOLERANCE && ihr <= r[3] + SEAM_TOLERANCE) {
+                    double score = Math.min(r[2] - iwr, r[3] - ihr);
+                    if (score < bestScore) {
+                        bestScore = score; bestIdx = i;
+                        bestX = r[0]; bestY = r[1]; bestRotated = true;
+                    }
+                }
             }
 
-            // Start a new board if this item doesn't fit vertically.
-            if (constrained && cursorY + ph > usableH + SEAM_TOLERANCE) {
-                double rowW = cursorX > 0 ? cursorX - spacing : 0;
-                if (rowW > maxW) maxW = rowW;
-                current.width  = maxW;
-                current.height = Math.max(0, cursorY + rowMaxH);
+            if (bestIdx < 0) {
+                // Item doesn’t fit on this board — open a new one.
+                current.width  = maxX;
+                current.height = maxY;
                 current = new LayoutResult();
                 boards.add(current);
-                cursorX = 0;
-                cursorY = 0;
-                rowMaxH = 0;
-                maxW    = 0;
+                free.clear();
+                free.add(new double[]{ 0, 0, usableW + spacing, usableH + spacing });
+                maxX = 0; maxY = 0;
+                bestX = 0; bestY = 0;
+                bestRotated = false;
             }
 
-            // Place item at (cursorX, cursorY) on the current board.
-            for (List<double[]> shape : item.shapes) {
-                current.shapes.add(translated(shape, cursorX, cursorY));
+            double placedW = bestRotated ? item.height : item.width;
+            double placedH = bestRotated ? item.width  : item.height;
+            if (bestRotated) {
+                // 90° CW rotation: (x, y) → (y, item.width − x), then translate.
+                double origW = item.width;
+                for (List<double[]> shape : item.shapes)
+                    current.shapes.add(translated(rotated90(shape, origW), bestX, bestY));
+                for (List<double[]> shape : item.referenceShapes)
+                    current.referenceShapes.add(translated(rotated90(shape, origW), bestX, bestY));
+                for (LayoutResult.Label lbl : item.labels)
+                    current.labels.add(new LayoutResult.Label(
+                            lbl.text, lbl.y + bestX, origW - lbl.x + bestY, lbl.size));
+            } else {
+                for (List<double[]> shape : item.shapes)
+                    current.shapes.add(translated(shape, bestX, bestY));
+                for (List<double[]> shape : item.referenceShapes)
+                    current.referenceShapes.add(translated(shape, bestX, bestY));
+                for (LayoutResult.Label lbl : item.labels)
+                    current.labels.add(new LayoutResult.Label(
+                            lbl.text, lbl.x + bestX, lbl.y + bestY, lbl.size));
             }
-            for (List<double[]> shape : item.referenceShapes) {
-                current.referenceShapes.add(translated(shape, cursorX, cursorY));
-            }
-            for (LayoutResult.Label label : item.labels) {
-                current.labels.add(new LayoutResult.Label(
-                        label.text, label.x + cursorX, label.y + cursorY, label.size));
-            }
+            if (bestX + placedW > maxX) maxX = bestX + placedW;
+            if (bestY + placedH > maxY) maxY = bestY + placedH;
 
-            cursorX += pw + spacing;
-            if (ph > rowMaxH) rowMaxH = ph;
+            maxRectsPlace(free, bestX, bestY,
+                    bestRotated ? iwr : iw,
+                    bestRotated ? ihr : ih);
         }
 
-        // Finalize last board.
-        double rowW = cursorX > 0 ? cursorX - spacing : 0;
-        if (rowW > maxW) maxW = rowW;
-        current.width  = maxW;
-        current.height = Math.max(0, cursorY + rowMaxH);
-
+        current.width  = maxX;
+        current.height = maxY;
         return boards;
+    }
+
+    /**
+     * MaxRects split-and-prune step.
+     *
+     * <p>For every free rectangle that overlaps the just-placed item (at
+     * {@code px,py} with effective size {@code pw × ph}), remove the free
+     * rectangle and replace it with up to four axis-aligned sub-rectangles
+     * covering its non-overlapping parts.  Then prune any free rectangle that
+     * is fully contained within another (those can never be the best choice for
+     * any future item).
+     */
+    private static void maxRectsPlace(List<double[]> free,
+                                       double px, double py, double pw, double ph) {
+        List<double[]> toAdd    = new ArrayList<>();
+        List<double[]> toRemove = new ArrayList<>();
+        for (double[] r : free) {
+            double rx = r[0], ry = r[1], rw = r[2], rh = r[3];
+            if (px >= rx + rw || px + pw <= rx || py >= ry + rh || py + ph <= ry) continue;
+            toRemove.add(r);
+            double left  = px      - rx;
+            double right = rx + rw - (px + pw);
+            double below = py      - ry;
+            double above = ry + rh - (py + ph);
+            if (left  > SEAM_TOLERANCE) toAdd.add(new double[]{ rx,       ry, left,  rh    });
+            if (right > SEAM_TOLERANCE) toAdd.add(new double[]{ px + pw,  ry, right, rh    });
+            if (below > SEAM_TOLERANCE) toAdd.add(new double[]{ rx,       ry, rw,    below });
+            if (above > SEAM_TOLERANCE) toAdd.add(new double[]{ rx, py + ph,  rw,    above });
+        }
+        free.removeAll(toRemove);
+        free.addAll(toAdd);
+        // Prune rectangles fully contained within another.
+        int n = free.size();
+        boolean[] drop = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            if (drop[i]) continue;
+            double[] a = free.get(i);
+            for (int j = 0; j < n; j++) {
+                if (i == j || drop[j]) continue;
+                double[] b = free.get(j);
+                if (b[0] <= a[0] && b[1] <= a[1]
+                        && b[0] + b[2] >= a[0] + a[2]
+                        && b[1] + b[3] >= a[1] + a[3]) {
+                    drop[i] = true;
+                    break;
+                }
+            }
+        }
+        List<double[]> pruned = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) { if (!drop[i]) pruned.add(free.get(i)); }
+        free.clear();
+        free.addAll(pruned);
     }
 
     /**
@@ -1422,6 +1501,13 @@ public final class LasercutExporter {
         for (double[] p : pts) {
             r.add(new double[] { p[0] + dx, p[1] + dy });
         }
+        return r;
+    }
+
+    /** 90° CW rotation: (x,y) → (y, origWidth-x), maps [0,W]×[0,H] → [0,H]×[0,W]. */
+    private static List<double[]> rotated90(List<double[]> pts, double origWidth) {
+        List<double[]> r = new ArrayList<>(pts.size());
+        for (double[] p : pts) r.add(new double[] { p[1], origWidth - p[0] });
         return r;
     }
 
