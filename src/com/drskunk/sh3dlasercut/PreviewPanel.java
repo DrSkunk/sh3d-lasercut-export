@@ -29,7 +29,7 @@ public final class PreviewPanel extends JComponent {
     private String emptyMessage = "(no walls)";
 
     public PreviewPanel() {
-        setPreferredSize(new Dimension(280, 320));
+        setPreferredSize(new Dimension(400, 460));
         setBackground(BACKGROUND);
         setOpaque(true);
         setBorder(BorderFactory.createLineBorder(new Color(0xAAAAAA)));
@@ -135,10 +135,12 @@ public final class PreviewPanel extends JComponent {
             g2.setFont(g2.getFont().deriveFont(11f));
             String text;
             if (!layout.boardRects.isEmpty()) {
+                int n = layout.boardRects.size();
+                double boardW = layout.boardRects.get(0)[2];
+                double boardH = layout.boardRects.get(0)[3];
                 text = String.format(Locale.US,
-                        "%.0f \u00d7 %.0f mm   (%d shapes, %d board%s)",
-                        bw, bh, layout.shapes.size(),
-                        layout.boardRects.size(), layout.boardRects.size() == 1 ? "" : "s");
+                        "%d board%s \u00b7 %.0f \u00d7 %.0f mm each   (%d shapes)",
+                        n, n == 1 ? "" : "s", boardW, boardH, layout.shapes.size());
             } else {
                 text = String.format(Locale.US,
                         "%.0f \u00d7 %.0f mm   (%d shapes)", bw, bh, layout.shapes.size());

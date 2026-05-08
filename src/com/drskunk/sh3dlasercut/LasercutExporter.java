@@ -966,6 +966,12 @@ public final class LasercutExporter {
         double usableH = constrained ? bh - 2 * spacing : Double.MAX_VALUE;
 
         if (constrained) {
+            if (usableW <= 0 || usableH <= 0) {
+                throw new IOException(String.format(Locale.US,
+                        "Layout spacing (%.0f mm) leaves no usable area on the board "
+                        + "(%.0f × %.0f mm). Reduce spacing or increase board size.",
+                        spacing, bw, bh));
+            }
             for (BoardItem item : items) {
                 if (item.width > usableW + SEAM_TOLERANCE || item.height > usableH + SEAM_TOLERANCE) {
                     String label = item.labels.isEmpty() ? "?" : item.labels.get(0).text;
@@ -977,6 +983,10 @@ public final class LasercutExporter {
             }
         }
 
+        // Sort largest-area items first so the strip-packer wastes less space.
+        List<BoardItem> sorted = new ArrayList<>(items);
+        sorted.sort((a, b) -> Double.compare(b.width * b.height, a.width * a.height));
+
         List<LayoutResult> boards = new ArrayList<>();
         LayoutResult current = new LayoutResult();
         boards.add(current);
@@ -985,7 +995,7 @@ public final class LasercutExporter {
         double rowMaxH = 0;
         double maxW    = 0;
 
-        for (BoardItem item : items) {
+        for (BoardItem item : sorted) {
             double pw = item.width;
             double ph = item.height;
 
