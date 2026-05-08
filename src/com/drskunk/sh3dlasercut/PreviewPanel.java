@@ -130,6 +130,26 @@ public final class PreviewPanel extends JComponent {
                 g2.draw(path);
             }
 
+            // Wall placement guides in the same gray as labels.
+            g2.setColor(new Color(0x888888));
+            g2.setStroke(new BasicStroke(0.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            for (List<double[]> shape : layout.referenceShapes) {
+                Path2D.Double path = new Path2D.Double();
+                boolean first = true;
+                for (double[] p : shape) {
+                    double x = p[0] * scale + offX;
+                    double y = p[1] * scale + offY;
+                    if (first) {
+                        path.moveTo(x, y);
+                        first = false;
+                    } else {
+                        path.lineTo(x, y);
+                    }
+                }
+                path.closePath();
+                g2.draw(path);
+            }
+
             // Dimension readout along the bottom.
             g2.setColor(INFO_TEXT);
             g2.setFont(g2.getFont().deriveFont(11f));

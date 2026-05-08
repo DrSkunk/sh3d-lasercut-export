@@ -13,6 +13,8 @@ import java.util.List;
 public final class LayoutResult {
     /** Each shape is a closed polygon, ordered list of {x, y}. */
     public final List<List<double[]>> shapes = new ArrayList<>();
+    /** Gray reference outlines (wall footprints on the floor), same color as labels. */
+    public final List<List<double[]>> referenceShapes = new ArrayList<>();
     /** Cosmetic labels (engraved or text annotations). */
     public final List<Label> labels = new ArrayList<>();
     /** Total layout extents, in mm. */

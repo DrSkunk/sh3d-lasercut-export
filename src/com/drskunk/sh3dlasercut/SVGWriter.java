@@ -83,6 +83,22 @@ public final class SVGWriter {
         updateBounds(x + w, y + h);
     }
 
+    /** Light-gray closed path for assembly-guide reference marks (e.g., wall footprints). */
+    public void addReferencePath(List<double[]> points, double offsetX, double offsetY) {
+        if (points.isEmpty()) return;
+        StringBuilder d = new StringBuilder();
+        for (int i = 0; i < points.size(); i++) {
+            double[] p = points.get(i);
+            double x = p[0] + offsetX;
+            double y = p[1] + offsetY;
+            d.append(i == 0 ? "M " : " L ");
+            d.append(fmt(x)).append(' ').append(fmt(y));
+            updateBounds(x, y);
+        }
+        d.append(" Z");
+        bodyElements.add("<path d=\"" + d + "\" stroke=\"#888888\" stroke-width=\"0.2\" />");
+    }
+
     /** Light-gray label, intended for engraving or cosmetic identification. */
     public void addLabel(String text, double x, double y, double sizeMm) {
         bodyElements.add(String.format(Locale.US,

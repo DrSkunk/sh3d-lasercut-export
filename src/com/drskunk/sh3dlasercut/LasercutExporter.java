@@ -50,17 +50,14 @@ public final class LasercutExporter {
     }
 
     public List<File> export(File outputFile) throws IOException {
+        if (collectWalls(home, targetLevel).isEmpty()) {
+            throw new IOException("No walls found on the selected level.");
+        }
         if (options.separateFilesPerBoard && isBoardConstrained()) {
             List<LayoutResult> boards = buildBoardLayouts();
-            if (boards.isEmpty() || boards.get(0).shapes.isEmpty()) {
-                throw new IOException("No walls found on the selected level.");
-            }
             return writeBoardFiles(outputFile, boards);
         } else {
             LayoutResult layout = buildLayout();
-            if (layout.shapes.isEmpty()) {
-                throw new IOException("No walls found on the selected level.");
-            }
             writeSvg(outputFile, layout);
             return Collections.singletonList(outputFile);
         }
@@ -342,6 +339,15 @@ public final class LasercutExporter {
     /** Minimum height difference (mm) for a wall to be considered sloping. */
     private static final double SLOPING_THRESHOLD_MM = 0.5;
 
+    /**
+     * Puzzle-joint seam proportions.  The neck (slot opening at the seam face)
+     * is narrower than the head (tab tip), so assembled tiles cannot be pulled
+     * apart perpendicular to the seam — they must slide in from the end.
+     * Values are fractions of the tab span width.
+     */
+    private static final double PUZZLE_NECK_FRACTION = 0.55; // slot opening = 55 % of span
+    private static final double PUZZLE_HEAD_FRACTION = 0.90; // tab tip      = 90 % of span
+
     private static double rawWallLengthMm(Wall wall) {
         double dx = (wall.getXEnd() - wall.getXStart()) * CM_TO_MM;
         double dy = (wall.getYEnd() - wall.getYStart()) * CM_TO_MM;
@@ -515,8 +521,17 @@ public final class LasercutExporter {
 
         double bw = options.boardWidth;
         double bh = options.boardHeight;
-        boolean tooWide = bw > 0 && floorW > bw + SEAM_TOLERANCE;
-        boolean tooTall = bh > 0 && floorH > bh + SEAM_TOLERANCE;
+        double spacing  = options.layoutSpacing;
+        double tabDepth = options.materialThickness;
+        boolean constrained = bw > 0 && bh > 0;
+
+        // When board packing is active, the usable area per board is the board
+        // dimensions minus the spacing margin on each side.  The floor must fit
+        // within that usable area (not the raw board dimensions).
+        double usableW = constrained ? bw - 2 * spacing : bw;
+        double usableH = constrained ? bh - 2 * spacing : bh;
+        boolean tooWide = bw > 0 && floorW > usableW + SEAM_TOLERANCE;
+        boolean tooTall = bh > 0 && floorH > usableH + SEAM_TOLERANCE;
 
         if (!tooWide && !tooTall) {
             gridSize[0] = 1; gridSize[1] = 1;
@@ -527,7 +542,7 @@ public final class LasercutExporter {
         if (!options.splitFloor) {
             result.boardWarning = String.format(Locale.US,
                     "Floor (%.0f \u00d7 %.0f mm) exceeds board size (%s \u00d7 %s mm). "
-                            + "Enable \"Split floor with puzzle joints if too large\" to split automatically.",
+                            + "Enable \"Split floor into interlocking tiles if too large\" to split automatically.",
                     floorW, floorH, fmtBoardDim(bw), fmtBoardDim(bh));
             gridSize[0] = 1; gridSize[1] = 1;
             return Collections.singletonList(
@@ -535,14 +550,18 @@ public final class LasercutExporter {
         }
 
         // Split into a grid of tiles with interlocking puzzle-joint seams.
-        List<Double> xCoords = buildSeamCoords(minX, maxX, bw);
-        List<Double> yCoords = buildSeamCoords(minY, maxY, bh);
+        // When constrained, each non-last tile has a puzzle-joint tab that protrudes
+        // tabDepth beyond the seam line.  To keep the tile's bounding box within the
+        // usable area, the seam interval is reduced by tabDepth so that
+        // (seam interval) + tabDepth = usableW/H.
+        double xInterval = tooWide ? (constrained ? Math.max(1, usableW - tabDepth) : bw) : 0;
+        double yInterval = tooTall ? (constrained ? Math.max(1, usableH - tabDepth) : bh) : 0;
+        List<Double> xCoords = buildSeamCoords(minX, maxX, xInterval);
+        List<Double> yCoords = buildSeamCoords(minY, maxY, yInterval);
         int numCols = xCoords.size() - 1;
         int numRows = yCoords.size() - 1;
         gridSize[0] = numCols;
         gridSize[1] = numRows;
-
-        double tabDepth = options.materialThickness;
         List<FloorPiece> tiles = new ArrayList<>();
         for (int row = 0; row < numRows; row++) {
             for (int col = 0; col < numCols; col++) {
@@ -566,6 +585,81 @@ public final class LasercutExporter {
             }
         }
         return tiles;
+    }
+
+    /**
+     * Build the footprint rectangle of a wall panel clipped to the given tile
+     * bounding box.  Pass {@code ±Double.MAX_VALUE} for the clip bounds to get
+     * the unclipped full-length footprint.
+     *
+     * <p>The wall centre-line segment (after inset for finger-joint connections)
+     * is clipped to {@code [clipX0,clipX1]×[clipY0,clipY1]} using Liang-Barsky.
+     * A thick rectangle of width {@code materialThickness} is then built around
+     * the clipped segment.  Returns an empty list when the segment does not
+     * intersect the tile at all.
+     */
+    private List<double[]> buildWallFootprintOnFloor(Wall wall, WallPiece piece,
+                                                      double clipX0, double clipY0,
+                                                      double clipX1, double clipY1) {
+        double sf   = scaleFactor();
+        double t    = options.materialThickness;
+        double sx   = wall.getXStart() * CM_TO_MM * sf;
+        double sy   = wall.getYStart() * CM_TO_MM * sf;
+        double ex   = wall.getXEnd()   * CM_TO_MM * sf;
+        double ey   = wall.getYEnd()   * CM_TO_MM * sf;
+        double rawLen = Math.hypot(ex - sx, ey - sy);
+        if (rawLen < COORD_EPSILON) return Collections.emptyList();
+        double dx = (ex - sx) / rawLen;
+        double dy = (ey - sy) / rawLen;
+        double nx = -dy;
+        double ny =  dx;
+        // Use full wall centerline extent (no panel inset) so adjacent wall
+        // footprints overlap slightly at junctions instead of leaving a gap.
+        double half = t / 2.0;
+        double psx = sx;
+        double psy = sy;
+        double pex = ex;
+        double pey = ey;
+
+        double[] seg = clipLineToRect(psx, psy, pex, pey, clipX0, clipY0, clipX1, clipY1);
+        if (seg == null) return Collections.emptyList();
+        if (Math.hypot(seg[2] - seg[0], seg[3] - seg[1]) < COORD_EPSILON) return Collections.emptyList();
+        psx = seg[0]; psy = seg[1];
+        pex = seg[2]; pey = seg[3];
+
+        List<double[]> pts = new ArrayList<>(4);
+        pts.add(new double[]{ psx - nx * half, psy - ny * half });
+        pts.add(new double[]{ pex - nx * half, pey - ny * half });
+        pts.add(new double[]{ pex + nx * half, pey + ny * half });
+        pts.add(new double[]{ psx + nx * half, psy + ny * half });
+        return pts;
+    }
+
+    /**
+     * Liang-Barsky line-clipping algorithm.
+     * Clips the segment from (x0,y0) to (x1,y1) to the axis-aligned rectangle
+     * [rx0,rx1]×[ry0,ry1].  Returns {cx0,cy0,cx1,cy1} for the clipped segment,
+     * or null when the segment is entirely outside the rectangle.
+     */
+    private static double[] clipLineToRect(double x0, double y0, double x1, double y1,
+                                            double rx0, double ry0, double rx1, double ry1) {
+        double dx = x1 - x0;
+        double dy = y1 - y0;
+        double tMin = 0, tMax = 1;
+        double[] p = { -dx,  dx, -dy,  dy };
+        double[] q = { x0 - rx0, rx1 - x0, y0 - ry0, ry1 - y0 };
+        for (int i = 0; i < 4; i++) {
+            if (Math.abs(p[i]) < COORD_EPSILON) {
+                if (q[i] < 0) return null; // parallel and outside
+            } else {
+                double t = q[i] / p[i];
+                if (p[i] < 0) { if (t > tMin) tMin = t; }
+                else          { if (t < tMax) tMax = t; }
+            }
+        }
+        if (tMin > tMax) return null;
+        return new double[] { x0 + tMin * dx, y0 + tMin * dy,
+                              x0 + tMax * dx, y0 + tMax * dy };
     }
 
     /** Extract the wall-tab slot rectangles from all walls (in world / scaled coords). */
@@ -727,6 +821,12 @@ public final class LasercutExporter {
      * at {@code x = xCut}, running from {@code y = yA} to {@code y = yB}.
      * Tabs protrude to {@code x = xCut + tabDepth}.
      *
+     * <p>Each tab uses a dovetail (locking) profile: the neck (at {@code xCut})
+     * is {@link #PUZZLE_NECK_FRACTION} of the span wide and the head (at
+     * {@code xCut + tabDepth}) is {@link #PUZZLE_HEAD_FRACTION} wide.  The wider
+     * head prevents the assembled tiles from being pulled apart perpendicular to
+     * the seam; they must slide together from the end.
+     *
      * <p>When {@code topToBottom=true} the path goes yA→yB (male right edge).
      * When {@code topToBottom=false} it goes yB→yA (female left edge of the
      * adjacent tile).  Both produce the exact same set of x/y coordinates; the
@@ -743,12 +843,17 @@ public final class LasercutExporter {
             pts.add(new double[] { xCut, yA });
             double cur = yA;
             for (TabPattern.Span span : tabs) {
-                double sa = yA + span.start;
-                double sb = yA + span.end;
-                if (sa > cur) pts.add(new double[] { xCut, sa });
-                pts.add(new double[] { xCut + tabDepth, sa });
-                pts.add(new double[] { xCut + tabDepth, sb });
-                pts.add(new double[] { xCut, sb });
+                double sa       = yA + span.start;
+                double sb       = yA + span.end;
+                double yC       = (sa + sb) / 2.0;
+                double neckHalf = (sb - sa) / 2.0 * PUZZLE_NECK_FRACTION;
+                double headHalf = (sb - sa) / 2.0 * PUZZLE_HEAD_FRACTION;
+                if (sa > cur)              pts.add(new double[] { xCut, sa });
+                if (yC - neckHalf > sa)    pts.add(new double[] { xCut, yC - neckHalf });
+                pts.add(new double[] { xCut + tabDepth, yC - headHalf });
+                pts.add(new double[] { xCut + tabDepth, yC + headHalf });
+                pts.add(new double[] { xCut, yC + neckHalf });
+                if (sb > yC + neckHalf)    pts.add(new double[] { xCut, sb });
                 cur = sb;
             }
             if (cur < yB) pts.add(new double[] { xCut, yB });
@@ -757,12 +862,17 @@ public final class LasercutExporter {
             double cur = yB;
             for (int i = tabs.size() - 1; i >= 0; i--) {
                 TabPattern.Span span = tabs.get(i);
-                double sa = yA + span.start;
-                double sb = yA + span.end;
-                if (sb < cur) pts.add(new double[] { xCut, sb });
-                pts.add(new double[] { xCut + tabDepth, sb });
-                pts.add(new double[] { xCut + tabDepth, sa });
-                pts.add(new double[] { xCut, sa });
+                double sa       = yA + span.start;
+                double sb       = yA + span.end;
+                double yC       = (sa + sb) / 2.0;
+                double neckHalf = (sb - sa) / 2.0 * PUZZLE_NECK_FRACTION;
+                double headHalf = (sb - sa) / 2.0 * PUZZLE_HEAD_FRACTION;
+                if (sb < cur)              pts.add(new double[] { xCut, sb });
+                if (yC + neckHalf < sb)    pts.add(new double[] { xCut, yC + neckHalf });
+                pts.add(new double[] { xCut + tabDepth, yC + headHalf });
+                pts.add(new double[] { xCut + tabDepth, yC - headHalf });
+                pts.add(new double[] { xCut, yC - neckHalf });
+                if (sa < yC - neckHalf)    pts.add(new double[] { xCut, sa });
                 cur = sa;
             }
             if (cur > yA) pts.add(new double[] { xCut, yA });
@@ -774,6 +884,9 @@ public final class LasercutExporter {
      * Generate the outline points for one side of a <em>horizontal</em> puzzle
      * seam at {@code y = yCut}, running from {@code x = xA} to {@code x = xB}.
      * Tabs protrude to {@code y = yCut + tabDepth}.
+     *
+     * <p>Same dovetail (locking) profile as {@link #buildVSeamPoints}: neck
+     * width {@link #PUZZLE_NECK_FRACTION}, head width {@link #PUZZLE_HEAD_FRACTION}.
      *
      * <p>{@code leftToRight=true} → xA→xB (male bottom edge).
      * {@code leftToRight=false} → xB→xA (female top edge of the adjacent tile).
@@ -789,12 +902,17 @@ public final class LasercutExporter {
             pts.add(new double[] { xA, yCut });
             double cur = xA;
             for (TabPattern.Span span : tabs) {
-                double sa = xA + span.start;
-                double sb = xA + span.end;
-                if (sa > cur) pts.add(new double[] { sa, yCut });
-                pts.add(new double[] { sa, yCut + tabDepth });
-                pts.add(new double[] { sb, yCut + tabDepth });
-                pts.add(new double[] { sb, yCut });
+                double sa       = xA + span.start;
+                double sb       = xA + span.end;
+                double xC       = (sa + sb) / 2.0;
+                double neckHalf = (sb - sa) / 2.0 * PUZZLE_NECK_FRACTION;
+                double headHalf = (sb - sa) / 2.0 * PUZZLE_HEAD_FRACTION;
+                if (sa > cur)              pts.add(new double[] { sa, yCut });
+                if (xC - neckHalf > sa)    pts.add(new double[] { xC - neckHalf, yCut });
+                pts.add(new double[] { xC - headHalf, yCut + tabDepth });
+                pts.add(new double[] { xC + headHalf, yCut + tabDepth });
+                pts.add(new double[] { xC + neckHalf, yCut });
+                if (sb > xC + neckHalf)    pts.add(new double[] { sb, yCut });
                 cur = sb;
             }
             if (cur < xB) pts.add(new double[] { xB, yCut });
@@ -803,12 +921,17 @@ public final class LasercutExporter {
             double cur = xB;
             for (int i = tabs.size() - 1; i >= 0; i--) {
                 TabPattern.Span span = tabs.get(i);
-                double sa = xA + span.start;
-                double sb = xA + span.end;
-                if (sb < cur) pts.add(new double[] { sb, yCut });
-                pts.add(new double[] { sb, yCut + tabDepth });
-                pts.add(new double[] { sa, yCut + tabDepth });
-                pts.add(new double[] { sa, yCut });
+                double sa       = xA + span.start;
+                double sb       = xA + span.end;
+                double xC       = (sa + sb) / 2.0;
+                double neckHalf = (sb - sa) / 2.0 * PUZZLE_NECK_FRACTION;
+                double headHalf = (sb - sa) / 2.0 * PUZZLE_HEAD_FRACTION;
+                if (sb < cur)              pts.add(new double[] { sb, yCut });
+                if (xC + neckHalf < sb)    pts.add(new double[] { xC + neckHalf, yCut });
+                pts.add(new double[] { xC + headHalf, yCut + tabDepth });
+                pts.add(new double[] { xC - headHalf, yCut + tabDepth });
+                pts.add(new double[] { xC - neckHalf, yCut });
+                if (sa < xC - neckHalf)    pts.add(new double[] { sa, yCut });
                 cur = sa;
             }
             if (cur > xA) pts.add(new double[] { xA, yCut });
@@ -849,16 +972,18 @@ public final class LasercutExporter {
      */
     private static final class BoardItem {
         final List<List<double[]>> shapes;
+        final List<List<double[]>> referenceShapes;
         final List<LayoutResult.Label> labels;
         final double width;
         final double height;
 
-        BoardItem(List<List<double[]>> shapes, List<LayoutResult.Label> labels,
-                  double width, double height) {
-            this.shapes = shapes;
-            this.labels = labels;
-            this.width  = width;
-            this.height = height;
+        BoardItem(List<List<double[]>> shapes, List<List<double[]>> referenceShapes,
+                  List<LayoutResult.Label> labels, double width, double height) {
+            this.shapes          = shapes;
+            this.referenceShapes = referenceShapes;
+            this.labels          = labels;
+            this.width           = width;
+            this.height          = height;
         }
     }
 
@@ -889,13 +1014,15 @@ public final class LasercutExporter {
                 shapes.add(translated(asPolygon(slot), offX, offY));
             }
 
+            List<List<double[]>> refShapes = new ArrayList<>();
             List<LayoutResult.Label> labels = new ArrayList<>();
             String floorLabel = numTiles > 1
                     ? "FLOOR " + (i + 1) + "/" + numTiles
                     : "FLOOR";
             labels.add(new LayoutResult.Label(floorLabel, 4, 8, 6));
 
-            // Wall midpoint labels on this floor tile.
+            // Wall midpoint labels (midpoint-owning tile only) and footprints
+            // (every tile the wall segment intersects, clipped to tile bounds).
             for (Map.Entry<Wall, WallPiece> entry : pieces.entrySet()) {
                 Wall wall  = entry.getKey();
                 WallPiece piece = entry.getValue();
@@ -910,9 +1037,14 @@ public final class LasercutExporter {
                     labels.add(new LayoutResult.Label(
                             piece.label, midWX + offX, midWY + offY, 4));
                 }
+                List<double[]> footprint = buildWallFootprintOnFloor(wall, piece,
+                        tile.bounds[0], tile.bounds[1], tile.bounds[2], tile.bounds[3]);
+                if (!footprint.isEmpty()) {
+                    refShapes.add(translated(footprint, offX, offY));
+                }
             }
 
-            items.add(new BoardItem(shapes, labels, w, h));
+            items.add(new BoardItem(shapes, refShapes, labels, w, h));
         }
 
         // ---- walls -------------------------------------------------------
@@ -937,7 +1069,7 @@ public final class LasercutExporter {
             List<LayoutResult.Label> labels = new ArrayList<>();
             labels.add(new LayoutResult.Label(piece.label, 2, 8, 6));
 
-            items.add(new BoardItem(shapes, labels, w, h));
+            items.add(new BoardItem(shapes, Collections.emptyList(), labels, w, h));
         }
 
         return items;
@@ -1029,6 +1161,9 @@ public final class LasercutExporter {
             for (List<double[]> shape : item.shapes) {
                 current.shapes.add(translated(shape, cursorX, cursorY));
             }
+            for (List<double[]> shape : item.referenceShapes) {
+                current.referenceShapes.add(translated(shape, cursorX, cursorY));
+            }
             for (LayoutResult.Label label : item.labels) {
                 current.labels.add(new LayoutResult.Label(
                         label.text, label.x + cursorX, label.y + cursorY, label.size));
@@ -1079,6 +1214,9 @@ public final class LasercutExporter {
 
             for (List<double[]> shape : board.shapes) {
                 result.shapes.add(translated(shape, itemOffX, itemOffY));
+            }
+            for (List<double[]> shape : board.referenceShapes) {
+                result.referenceShapes.add(translated(shape, itemOffX, itemOffY));
             }
             for (LayoutResult.Label label : board.labels) {
                 result.labels.add(new LayoutResult.Label(
@@ -1154,9 +1292,10 @@ public final class LasercutExporter {
             cursorY += rowMaxH + spacing;
         }
 
-        // ---- wall-identifier labels on the floor tiles ----------------------
-        // Each wall's label is placed at the wall's midpoint on whichever tile
-        // that midpoint falls on, so the assembler can match panels to slots.
+        // ---- wall-identifier labels and footprints on the floor tiles -------
+        // Labels go on whichever tile the wall midpoint falls on (one per wall).
+        // Footprints appear on every tile the wall segment intersects, clipped
+        // to that tile's bounds so nothing extends outside the tile outline.
         for (Map.Entry<Wall, WallPiece> entry : pieces.entrySet()) {
             Wall wall = entry.getKey();
             WallPiece piece = entry.getValue();
@@ -1169,12 +1308,19 @@ public final class LasercutExporter {
 
             for (int i = 0; i < numTiles; i++) {
                 FloorPiece tile = floorTiles.get(i);
+                double tOffX = tilePos[i][0] - tilePos[i][2];
+                double tOffY = tilePos[i][1] - tilePos[i][3];
+
                 if (midWX >= tile.bounds[0] && midWX <= tile.bounds[2]
                         && midWY >= tile.bounds[1] && midWY <= tile.bounds[3]) {
-                    double labelX = midWX + (tilePos[i][0] - tilePos[i][2]);
-                    double labelY = midWY + (tilePos[i][1] - tilePos[i][3]);
-                    result.labels.add(new LayoutResult.Label(piece.label, labelX, labelY, 4));
-                    break;
+                    result.labels.add(new LayoutResult.Label(
+                            piece.label, midWX + tOffX, midWY + tOffY, 4));
+                }
+
+                List<double[]> footprint = buildWallFootprintOnFloor(wall, piece,
+                        tile.bounds[0], tile.bounds[1], tile.bounds[2], tile.bounds[3]);
+                if (!footprint.isEmpty()) {
+                    result.referenceShapes.add(translated(footprint, tOffX, tOffY));
                 }
             }
         }
@@ -1212,6 +1358,9 @@ public final class LasercutExporter {
         for (List<double[]> shape : layout.shapes) {
             svg.addPolygon(shape, 0, 0);
         }
+        for (List<double[]> shape : layout.referenceShapes) {
+            svg.addReferencePath(shape, 0, 0);
+        }
         for (LayoutResult.Label label : layout.labels) {
             svg.addLabel(label.text, label.x, label.y, label.size);
         }
@@ -1231,6 +1380,9 @@ public final class LasercutExporter {
         svg.addBoardOutline(0, 0, bw, bh);
         for (List<double[]> shape : boardLayout.shapes) {
             svg.addPolygon(translated(shape, spacing, spacing), 0, 0);
+        }
+        for (List<double[]> shape : boardLayout.referenceShapes) {
+            svg.addReferencePath(translated(shape, spacing, spacing), 0, 0);
         }
         for (LayoutResult.Label label : boardLayout.labels) {
             svg.addLabel(label.text, label.x + spacing, label.y + spacing, label.size);
