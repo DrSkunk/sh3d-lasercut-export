@@ -3,6 +3,7 @@ package com.drskunk.sh3dlasercut;
 import com.eteks.sweethome3d.model.Home;
 
 import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JColorChooser;
@@ -38,31 +39,31 @@ public final class ExportOptionsPanel {
         if (defaults == null) defaults = new ExportOptions();
         final ModelMetrics metrics = LasercutExporter.computeMetrics(home);
 
-        final JTextField scaleField     = new JTextField(format(defaults.scaleDivisor), 8);
-        final JTextField thicknessField = new JTextField(format(defaults.materialThickness), 8);
-        final JTextField tabWidthField  = new JTextField(format(defaults.tabWidth), 8);
-        final JTextField marginField    = new JTextField(format(defaults.floorMargin), 8);
-        final JTextField spacingField   = new JTextField(format(defaults.layoutSpacing), 8);
-        final JTextField strokeField    = new JTextField(format(defaults.svgStrokeWidth), 8);
-        final JCheckBox  smoothBox      = new JCheckBox(
-                "Smooth connections -- no finger joints, glue pieces together",
+        final JTextField scaleField       = new JTextField(format(defaults.scaleDivisor), 8);
+        final JTextField thicknessField   = new JTextField(format(defaults.materialThickness), 8);
+        final JTextField tabWidthField    = new JTextField(format(defaults.tabWidth), 8);
+        final JTextField marginField      = new JTextField(format(defaults.floorMargin), 8);
+        final JTextField spacingField     = new JTextField(format(defaults.layoutSpacing), 8);
+        final JTextField strokeField      = new JTextField(format(defaults.svgStrokeWidth), 8);
+        final JCheckBox  smoothBox        = new JCheckBox(
+                "Smooth connections — no finger joints, glue only",
                 defaults.smoothConnections);
         final JTextField boardWidthField  = new JTextField(format(defaults.boardWidth), 8);
         final JTextField boardHeightField = new JTextField(format(defaults.boardHeight), 8);
         final JCheckBox  splitFloorBox    = new JCheckBox(
-                "Split floor with puzzle joints if too large",
+                "Split floor into interlocking tiles if too large",
                 defaults.splitFloor);
         final JCheckBox  separateFilesBox = new JCheckBox(
-                "Write one SVG file per board (requires both board dimensions)",
+                "Write one SVG file per board",
                 defaults.separateFilesPerBoard);
 
-        final String[] slopingItems = {
-                "Compensate (clip joints to actual height)",
-                "Smooth (no finger joints on sloping wall ends)"
-        };
-        final JComboBox<String> slopingBox = new JComboBox<>(slopingItems);
+        final JComboBox<String> slopingBox = new JComboBox<>(new String[]{
+                "Compensate — clip joints to height",
+                "Smooth — no joints on sloped ends"
+        });
         slopingBox.setSelectedIndex(
                 defaults.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH ? 1 : 0);
+        final JLabel slopingLabel = new JLabel("Sloping wall joints:", SwingConstants.RIGHT);
 
         final Color[] colorHolder = { defaults.cutStrokeColor != null ? defaults.cutStrokeColor : Color.RED };
         final JButton colorButton = new JButton();
@@ -92,7 +93,7 @@ public final class ExportOptionsPanel {
                     double[] size = metrics.estimateOutputSize(tentative);
                     previewLabel.setForeground(Color.BLACK);
                     previewLabel.setText(String.format(Locale.US,
-                            "Estimated output: %.0f \u00d7 %.0f mm   (1:%.0f scale)",
+                            "Estimated output: %.0f × %.0f mm   (1:%.0f scale)",
                             size[0], size[1], tentative.scaleDivisor));
                 }
             } catch (Exception ex) {
@@ -102,10 +103,25 @@ public final class ExportOptionsPanel {
             }
         };
 
+        final Runnable updateEnabled = () -> {
+            boolean smooth = smoothBox.isSelected();
+            slopingLabel.setEnabled(!smooth);
+            slopingBox.setEnabled(!smooth);
+
+            double bw = 0, bh = 0;
+            try { bw = Double.parseDouble(boardWidthField.getText().trim()); } catch (Exception ignored) {}
+            try { bh = Double.parseDouble(boardHeightField.getText().trim()); } catch (Exception ignored) {}
+            boolean hasBoard = bw > 0 && bh > 0;
+            splitFloorBox.setEnabled(hasBoard);
+            separateFilesBox.setEnabled(hasBoard);
+        };
+
+        final Runnable update = () -> { refresh.run(); updateEnabled.run(); };
+
         DocumentListener live = new DocumentListener() {
-            @Override public void insertUpdate(DocumentEvent e)  { refresh.run(); }
-            @Override public void removeUpdate(DocumentEvent e)  { refresh.run(); }
-            @Override public void changedUpdate(DocumentEvent e) { refresh.run(); }
+            @Override public void insertUpdate(DocumentEvent e)  { update.run(); }
+            @Override public void removeUpdate(DocumentEvent e)  { update.run(); }
+            @Override public void changedUpdate(DocumentEvent e) { update.run(); }
         };
         scaleField.getDocument().addDocumentListener(live);
         thicknessField.getDocument().addDocumentListener(live);
@@ -113,10 +129,10 @@ public final class ExportOptionsPanel {
         marginField.getDocument().addDocumentListener(live);
         spacingField.getDocument().addDocumentListener(live);
         strokeField.getDocument().addDocumentListener(live);
-        smoothBox.addActionListener(e -> refresh.run());
-        slopingBox.addActionListener(e -> refresh.run());
         boardWidthField.getDocument().addDocumentListener(live);
         boardHeightField.getDocument().addDocumentListener(live);
+        smoothBox.addActionListener(e -> update.run());
+        slopingBox.addActionListener(e -> refresh.run());
         splitFloorBox.addActionListener(e -> refresh.run());
         separateFilesBox.addActionListener(e -> refresh.run());
         colorButton.addActionListener(e -> {
@@ -128,44 +144,72 @@ public final class ExportOptionsPanel {
             }
         });
 
-        // ---- form column -----------------------------------------------------
-        JPanel form = new JPanel(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();
-        c.insets = new Insets(4, 6, 4, 6);
+        c.insets = new Insets(3, 6, 3, 6);
         c.anchor = GridBagConstraints.WEST;
 
-        int row = 0;
-        addRow(form, c, row++, "Scale 1:", scaleField);
-        addRow(form, c, row++, "Material thickness (mm):", thicknessField);
-        addRow(form, c, row++, "Box-joint finger width (mm):", tabWidthField);
-        addRow(form, c, row++, "Floor margin (mm):", marginField);
-        addRow(form, c, row++, "Layout spacing (mm):", spacingField);
-        addRow(form, c, row++, "SVG stroke width (mm):", strokeField);
-        addRow(form, c, row++, "Cut stroke color:", colorButton);
+        // ---- Section 1: Scale & Material ------------------------------------
+        JPanel scalePanel = makeSection("Scale & Material");
+        addRow(scalePanel, c, 0, "Scale (1:N):", scaleField);
+        addRow(scalePanel, c, 1, "Material thickness (mm):", thicknessField);
+        addRow(scalePanel, c, 2, "Finger width (mm):", tabWidthField);
 
-        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
-        form.add(smoothBox, c);
+        // ---- Section 2: Connections -----------------------------------------
+        JPanel jointsPanel = makeSection("Connections");
+        c.gridx = 0; c.gridy = 0; c.gridwidth = 2; c.fill = GridBagConstraints.HORIZONTAL;
+        jointsPanel.add(smoothBox, c);
+        c.gridx = 0; c.gridy = 1; c.gridwidth = 1; c.fill = GridBagConstraints.NONE;
+        jointsPanel.add(slopingLabel, c);
+        c.gridx = 1; c.fill = GridBagConstraints.HORIZONTAL;
+        jointsPanel.add(slopingBox, c);
 
-        addRow(form, c, row++, "Sloping walls:", slopingBox);
+        // ---- Section 3: Layout & Output -------------------------------------
+        JPanel layoutPanel = makeSection("Layout & Output");
+        addRow(layoutPanel, c, 0, "Floor margin (mm):", marginField);
+        addRow(layoutPanel, c, 1, "Layout spacing (mm):", spacingField);
+        addRow(layoutPanel, c, 2, "SVG stroke width (mm):", strokeField);
+        addRow(layoutPanel, c, 3, "Cut color:", colorButton);
 
-        addRow(form, c, row++, "Board width (mm, 0=no limit):", boardWidthField);
-        addRow(form, c, row++, "Board height (mm, 0=no limit):", boardHeightField);
+        // ---- Section 4: Board -----------------------------------------------
+        JPanel boardPanel = makeSection("Board");
+        addRow(boardPanel, c, 0, "Board width (mm):", boardWidthField);
+        addRow(boardPanel, c, 1, "Board height (mm):", boardHeightField);
 
-        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
-        form.add(splitFloorBox, c);
+        JLabel boardHint = new JLabel("Enter 0 for no board size limit");
+        boardHint.setForeground(new Color(0x888888));
+        boardHint.setFont(boardHint.getFont().deriveFont(10f));
+        c.gridx = 1; c.gridy = 2; c.gridwidth = 1; c.fill = GridBagConstraints.NONE;
+        c.insets = new Insets(0, 6, 4, 6);
+        boardPanel.add(boardHint, c);
+        c.insets = new Insets(3, 6, 3, 6);
 
-        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
-        form.add(separateFilesBox, c);
+        c.gridx = 0; c.gridy = 3; c.gridwidth = 2; c.fill = GridBagConstraints.HORIZONTAL;
+        boardPanel.add(splitFloorBox, c);
+        c.gridy = 4;
+        boardPanel.add(separateFilesBox, c);
 
-        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
-        c.insets = new Insets(10, 6, 2, 6);
-        form.add(modelInfoLabel, c);
+        // ---- Status row (model info + preview label) ------------------------
+        JPanel statusPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints sc = new GridBagConstraints();
+        sc.anchor = GridBagConstraints.WEST;
+        sc.insets = new Insets(4, 8, 2, 6);
+        sc.gridx = 0; sc.gridy = 0;
+        statusPanel.add(modelInfoLabel, sc);
+        sc.insets = new Insets(2, 8, 6, 6);
+        sc.gridy = 1;
+        statusPanel.add(previewLabel, sc);
 
-        c.gridx = 0; c.gridy = row++; c.gridwidth = 2;
-        c.insets = new Insets(2, 6, 8, 6);
-        form.add(previewLabel, c);
+        // ---- Assemble form --------------------------------------------------
+        JPanel form = new JPanel();
+        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+        for (JPanel section : new JPanel[]{scalePanel, jointsPanel, layoutPanel, boardPanel}) {
+            section.setAlignmentX(Component.LEFT_ALIGNMENT);
+            form.add(section);
+        }
+        statusPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        form.add(statusPanel);
 
-        // ---- preview column --------------------------------------------------
+        // ---- Preview column -------------------------------------------------
         JPanel previewWrap = new JPanel(new BorderLayout());
         previewWrap.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 4));
         JLabel previewTitle = new JLabel("Cut layout preview");
@@ -173,20 +217,17 @@ public final class ExportOptionsPanel {
         previewWrap.add(previewTitle, BorderLayout.NORTH);
         previewWrap.add(preview, BorderLayout.CENTER);
 
-        // ---- combined --------------------------------------------------------
         JPanel root = new JPanel(new BorderLayout());
         root.add(form, BorderLayout.WEST);
         root.add(previewWrap, BorderLayout.CENTER);
 
-        refresh.run();
+        update.run();
 
         int result = JOptionPane.showConfirmDialog(parent, root,
                 "Lasercut Export Options",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE);
-        if (result != JOptionPane.OK_OPTION) {
-            return null;
-        }
+        if (result != JOptionPane.OK_OPTION) return null;
 
         try {
             return readOptions(scaleField, thicknessField, tabWidthField,
@@ -225,6 +266,22 @@ public final class ExportOptionsPanel {
         return opts;
     }
 
+    private static JPanel makeSection(String title) {
+        JPanel p = new JPanel(new GridBagLayout());
+        p.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createEtchedBorder(), title));
+        return p;
+    }
+
+    private static void addRow(JPanel panel, GridBagConstraints c, int row, String label, Component field) {
+        c.gridx = 0; c.gridy = row; c.gridwidth = 1;
+        c.fill = GridBagConstraints.NONE;
+        panel.add(new JLabel(label, SwingConstants.RIGHT), c);
+        c.gridx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        panel.add(field, c);
+    }
+
     private static void applyColorButton(JButton btn, Color c) {
         btn.setBackground(c);
         btn.setOpaque(true);
@@ -242,15 +299,6 @@ public final class ExportOptionsPanel {
                 "Model: %d walls, footprint %.0f × %.0f mm at full scale",
                 metrics.wallLengths_mm.size(),
                 metrics.floorWidth_mm, metrics.floorHeight_mm);
-    }
-
-    private static void addRow(JPanel panel, GridBagConstraints c, int row, String label, Component field) {
-        c.gridx = 0; c.gridy = row; c.gridwidth = 1;
-        c.fill = GridBagConstraints.NONE;
-        panel.add(new JLabel(label, SwingConstants.RIGHT), c);
-        c.gridx = 1;
-        c.fill = GridBagConstraints.HORIZONTAL;
-        panel.add(field, c);
     }
 
     private static double parsePositive(String s, String name) {
