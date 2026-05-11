@@ -38,7 +38,7 @@ public final class LasercutExportAction extends PluginAction {
         if (options == null) return;
         lastOptions = options;
 
-        File outputFile = chooseOutputFile(parent);
+        File outputFile = chooseOutputFile(parent, options.exportFormat);
         if (outputFile == null) return;
         lastDirectory = outputFile.getParentFile();
 
@@ -67,10 +67,16 @@ public final class LasercutExportAction extends PluginAction {
         }
     }
 
-    private File chooseOutputFile(Component parent) {
+    private File chooseOutputFile(Component parent, ExportOptions.ExportFormat fmt) {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Save lasercut SVG");
-        chooser.setFileFilter(new FileNameExtensionFilter("SVG files (*.svg)", "svg"));
+        chooser.setDialogTitle("Save lasercut file");
+        boolean wantDxf = fmt == ExportOptions.ExportFormat.DXF;
+        String ext = wantDxf ? ".dxf" : ".svg";
+        if (wantDxf) {
+            chooser.setFileFilter(new FileNameExtensionFilter("DXF files (*.dxf)", "dxf"));
+        } else {
+            chooser.setFileFilter(new FileNameExtensionFilter("SVG files (*.svg)", "svg"));
+        }
         if (lastDirectory != null) {
             chooser.setCurrentDirectory(lastDirectory);
         }
@@ -79,20 +85,23 @@ public final class LasercutExportAction extends PluginAction {
         if (name == null || name.isEmpty()) {
             name = "lasercut";
         } else {
-            // Strip any path / extension from the home name.
             String base = new File(name).getName();
             int dot = base.lastIndexOf('.');
             if (dot > 0) base = base.substring(0, dot);
             name = base + "-lasercut";
         }
-        chooser.setSelectedFile(new File(chooser.getCurrentDirectory(), name + ".svg"));
+        chooser.setSelectedFile(new File(chooser.getCurrentDirectory(), name + ext));
 
         int result = chooser.showSaveDialog(parent);
         if (result != JFileChooser.APPROVE_OPTION) return null;
         File file = chooser.getSelectedFile();
-        if (!file.getName().toLowerCase().endsWith(".svg")) {
-            file = new File(file.getParentFile(), file.getName() + ".svg");
+        // Strip any recognized extension so export() can add the correct one.
+        String fname = file.getName();
+        String lower = fname.toLowerCase();
+        if (lower.endsWith(".svg") || lower.endsWith(".dxf")) {
+            fname = fname.substring(0, fname.length() - 4);
         }
+        file = new File(file.getParentFile(), fname + ext);
         if (file.exists()) {
             int overwrite = JOptionPane.showConfirmDialog(parent,
                     file.getName() + " already exists. Overwrite?",

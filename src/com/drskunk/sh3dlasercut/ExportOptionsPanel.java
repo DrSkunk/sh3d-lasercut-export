@@ -45,6 +45,9 @@ public final class ExportOptionsPanel {
         final JTextField marginField      = new JTextField(format(defaults.floorMargin), 8);
         final JTextField spacingField     = new JTextField(format(defaults.layoutSpacing), 8);
         final JTextField strokeField      = new JTextField(format(defaults.svgStrokeWidth), 8);
+        final JTextField kerfField        = new JTextField(format(defaults.kerfMm), 8);
+        final JTextField bridgeField      = new JTextField(format(defaults.bridgeWidth), 8);
+        final JTextField bridgesPerField  = new JTextField(String.valueOf(defaults.bridgesPerEdge), 8);
         final JCheckBox  smoothBox        = new JCheckBox(
                 "Smooth connections — no finger joints, glue only",
                 defaults.smoothConnections);
@@ -54,7 +57,7 @@ public final class ExportOptionsPanel {
                 "Split floor into interlocking tiles if too large",
                 defaults.splitFloor);
         final JCheckBox  separateFilesBox = new JCheckBox(
-                "Write one SVG file per board",
+                "Write one file per board",
                 defaults.separateFilesPerBoard);
 
         final JComboBox<String> slopingBox = new JComboBox<>(new String[]{
@@ -64,6 +67,11 @@ public final class ExportOptionsPanel {
         slopingBox.setSelectedIndex(
                 defaults.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH ? 1 : 0);
         final JLabel slopingLabel = new JLabel("Sloping wall joints:", SwingConstants.RIGHT);
+
+        final JComboBox<String> formatBox = new JComboBox<>(new String[]{"SVG", "DXF", "SVG + DXF"});
+        formatBox.setSelectedIndex(
+                defaults.exportFormat == ExportOptions.ExportFormat.DXF  ? 1 :
+                defaults.exportFormat == ExportOptions.ExportFormat.BOTH ? 2 : 0);
 
         final Color[] colorHolder = { defaults.cutStrokeColor != null ? defaults.cutStrokeColor : Color.RED };
         final JButton colorButton = new JButton();
@@ -82,8 +90,10 @@ public final class ExportOptionsPanel {
                 ExportOptions tentative = readOptions(
                         scaleField, thicknessField, tabWidthField,
                         marginField, spacingField, strokeField,
+                        kerfField, bridgeField, bridgesPerField,
                         smoothBox, slopingBox, colorHolder[0],
-                        boardWidthField, boardHeightField, splitFloorBox, separateFilesBox);
+                        boardWidthField, boardHeightField, splitFloorBox, separateFilesBox,
+                        formatBox);
                 LayoutResult layout = new LasercutExporter(home, tentative).buildLayout();
                 preview.setLayout(layout, tentative.cutStrokeColor);
                 if (layout.boardWarning != null) {
@@ -129,12 +139,16 @@ public final class ExportOptionsPanel {
         marginField.getDocument().addDocumentListener(live);
         spacingField.getDocument().addDocumentListener(live);
         strokeField.getDocument().addDocumentListener(live);
+        kerfField.getDocument().addDocumentListener(live);
+        bridgeField.getDocument().addDocumentListener(live);
+        bridgesPerField.getDocument().addDocumentListener(live);
         boardWidthField.getDocument().addDocumentListener(live);
         boardHeightField.getDocument().addDocumentListener(live);
         smoothBox.addActionListener(e -> update.run());
         slopingBox.addActionListener(e -> refresh.run());
         splitFloorBox.addActionListener(e -> refresh.run());
         separateFilesBox.addActionListener(e -> refresh.run());
+        formatBox.addActionListener(e -> refresh.run());
         colorButton.addActionListener(e -> {
             Color picked = JColorChooser.showDialog(colorButton, "Cut stroke color", colorHolder[0]);
             if (picked != null) {
@@ -169,8 +183,15 @@ public final class ExportOptionsPanel {
         addRow(layoutPanel, c, 1, "Layout spacing (mm):", spacingField);
         addRow(layoutPanel, c, 2, "SVG stroke width (mm):", strokeField);
         addRow(layoutPanel, c, 3, "Cut color:", colorButton);
+        addRow(layoutPanel, c, 4, "Export format:", formatBox);
 
-        // ---- Section 4: Board -----------------------------------------------
+        // ---- Section 4: Cut Quality -----------------------------------------
+        JPanel qualityPanel = makeSection("Cut Quality");
+        addRow(qualityPanel, c, 0, "Kerf compensation (mm):", kerfField);
+        addRow(qualityPanel, c, 1, "Bridge width (mm):", bridgeField);
+        addRow(qualityPanel, c, 2, "Bridges per edge:", bridgesPerField);
+
+        // ---- Section 5: Board -----------------------------------------------
         JPanel boardPanel = makeSection("Board");
         addRow(boardPanel, c, 0, "Board width (mm):", boardWidthField);
         addRow(boardPanel, c, 1, "Board height (mm):", boardHeightField);
@@ -202,7 +223,7 @@ public final class ExportOptionsPanel {
         // ---- Assemble form --------------------------------------------------
         JPanel form = new JPanel();
         form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
-        for (JPanel section : new JPanel[]{scalePanel, jointsPanel, layoutPanel, boardPanel}) {
+        for (JPanel section : new JPanel[]{scalePanel, jointsPanel, layoutPanel, qualityPanel, boardPanel}) {
             section.setAlignmentX(Component.LEFT_ALIGNMENT);
             form.add(section);
         }
@@ -232,8 +253,10 @@ public final class ExportOptionsPanel {
         try {
             return readOptions(scaleField, thicknessField, tabWidthField,
                     marginField, spacingField, strokeField,
+                    kerfField, bridgeField, bridgesPerField,
                     smoothBox, slopingBox, colorHolder[0],
-                    boardWidthField, boardHeightField, splitFloorBox, separateFilesBox);
+                    boardWidthField, boardHeightField, splitFloorBox, separateFilesBox,
+                    formatBox);
         } catch (RuntimeException e) {
             JOptionPane.showMessageDialog(parent, e.getMessage(),
                     "Invalid input", JOptionPane.ERROR_MESSAGE);
@@ -244,9 +267,11 @@ public final class ExportOptionsPanel {
     private static ExportOptions readOptions(
             JTextField scaleField, JTextField thicknessField, JTextField tabWidthField,
             JTextField marginField, JTextField spacingField, JTextField strokeField,
+            JTextField kerfField, JTextField bridgeField, JTextField bridgesPerField,
             JCheckBox smoothBox, JComboBox<String> slopingBox, Color cutColor,
             JTextField boardWidthField, JTextField boardHeightField,
-            JCheckBox splitFloorBox, JCheckBox separateFilesBox) {
+            JCheckBox splitFloorBox, JCheckBox separateFilesBox,
+            JComboBox<String> formatBox) {
         ExportOptions opts = new ExportOptions();
         opts.scaleDivisor          = parsePositive(scaleField.getText(),      "Scale divisor");
         opts.materialThickness     = parsePositive(thicknessField.getText(),  "Material thickness");
@@ -254,6 +279,9 @@ public final class ExportOptionsPanel {
         opts.floorMargin           = parseNonNegative(marginField.getText(),  "Floor margin");
         opts.layoutSpacing         = parseNonNegative(spacingField.getText(), "Layout spacing");
         opts.svgStrokeWidth        = parseNonNegative(strokeField.getText(),  "Stroke width");
+        opts.kerfMm                = parseNonNegative(kerfField.getText(),    "Kerf compensation");
+        opts.bridgeWidth           = parseNonNegative(bridgeField.getText(),  "Bridge width");
+        opts.bridgesPerEdge        = Math.max(1, (int) parsePositive(bridgesPerField.getText(), "Bridges per edge"));
         opts.smoothConnections     = smoothBox.isSelected();
         opts.slopingWallMode       = slopingBox.getSelectedIndex() == 1
                 ? ExportOptions.SlopingWallMode.SMOOTH
@@ -263,6 +291,10 @@ public final class ExportOptionsPanel {
         opts.boardHeight           = parseNonNegative(boardHeightField.getText(), "Board height");
         opts.splitFloor            = splitFloorBox.isSelected();
         opts.separateFilesPerBoard = separateFilesBox.isSelected();
+        int fmtIdx = formatBox.getSelectedIndex();
+        opts.exportFormat = fmtIdx == 1 ? ExportOptions.ExportFormat.DXF
+                          : fmtIdx == 2 ? ExportOptions.ExportFormat.BOTH
+                          : ExportOptions.ExportFormat.SVG;
         return opts;
     }
 

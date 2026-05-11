@@ -58,8 +58,22 @@ public final class LasercutExporter {
             return writeBoardFiles(outputFile, boards);
         } else {
             LayoutResult layout = buildLayout();
-            writeSvg(outputFile, layout);
-            return Collections.singletonList(outputFile);
+            String base = stripExtension(outputFile.getName());
+            File dir = outputFile.getParentFile();
+            if (dir == null) dir = new File(".");
+            ExportOptions.ExportFormat fmt = options.exportFormat;
+            List<File> written = new ArrayList<>();
+            if (fmt != ExportOptions.ExportFormat.DXF) {
+                File f = new File(dir, base + ".svg");
+                writeSvg(f, layout);
+                written.add(f);
+            }
+            if (fmt != ExportOptions.ExportFormat.SVG) {
+                File f = new File(dir, base + ".dxf");
+                writeDxf(f, layout);
+                written.add(f);
+            }
+            return written;
         }
     }
 
@@ -81,6 +95,7 @@ public final class LasercutExporter {
             pieces.put(w, buildWallPiece(w, wallSet, idx++));
         }
         addTJunctionNotches(walls, wallSet, pieces);
+        addCrossJunctionNotches(walls, pieces);
 
         LayoutResult result = new LayoutResult();
         int[] gridSize = { 1, 1 }; // [numCols, numRows] of floor tile grid
@@ -115,6 +130,7 @@ public final class LasercutExporter {
             pieces.put(w, buildWallPiece(w, wallSet, idx++));
         }
         addTJunctionNotches(walls, wallSet, pieces);
+        addCrossJunctionNotches(walls, pieces);
 
         LayoutResult dummy = new LayoutResult(); // boardWarning not needed here
         int[] gridSize = { 1, 1 };
@@ -186,6 +202,8 @@ public final class LasercutExporter {
         List<TabPattern.Span> leftTabs = null;
         List<TabPattern.Span> rightTabs = null;
         boolean leftConnected = false, rightConnected = false;
+        double leftAngle  = Math.PI / 2; // angle between wall directions at start junction
+        double rightAngle = Math.PI / 2; // angle between wall directions at end junction
         if (!options.smoothConnections) {
             Wall startNeighbor = wall.getWallAtStart();
             boolean skipStart = startNeighbor != null
@@ -193,6 +211,7 @@ public final class LasercutExporter {
                     && options.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH;
             if (!skipStart && startNeighbor != null && levelWalls.contains(startNeighbor)) {
                 leftConnected = true;
+                leftAngle = angleAtJunction(wall, true, startNeighbor);
                 boolean primary = isPrimary(wall, startNeighbor);
                 double jointH = computeJointHeightScaled(wall, true, startNeighbor, sf);
                 leftTabs = TabPattern.compute(jointH, tabWidth, !primary);
@@ -203,18 +222,23 @@ public final class LasercutExporter {
                     && options.slopingWallMode == ExportOptions.SlopingWallMode.SMOOTH;
             if (!skipEnd && endNeighbor != null && levelWalls.contains(endNeighbor)) {
                 rightConnected = true;
+                rightAngle = angleAtJunction(wall, false, endNeighbor);
                 boolean primary = isPrimary(wall, endNeighbor);
                 double jointH = computeJointHeightScaled(wall, false, endNeighbor, sf);
                 rightTabs = TabPattern.compute(jointH, tabWidth, !primary);
             }
         }
 
-        // Each connected end is inset by half the material thickness so that the
-        // finger tabs protrude from the adjacent wall's inner face to its outer
-        // face (spanning exactly one material thickness), rather than from the
-        // wall's centre-line (which would overshoot by t/2).
-        double startOffset = leftConnected  ? thickness / 2.0 : 0;
-        double endOffset   = rightConnected ? thickness / 2.0 : 0;
+        // Inset each connected end by T/(2*sin(theta)) so that the finger tabs
+        // span exactly the mating panel's thickness.  For 90-degree corners
+        // sin(theta)=1 so the inset is simply T/2 (the previous fixed value).
+        // Capping sin at 0.2 prevents absurdly deep tabs at near-collinear walls.
+        double sinLeft  = Math.max(0.2, Math.abs(Math.sin(leftAngle)));
+        double sinRight = Math.max(0.2, Math.abs(Math.sin(rightAngle)));
+        double leftTabDepth  = leftConnected  ? thickness / sinLeft  : thickness;
+        double rightTabDepth = rightConnected ? thickness / sinRight : thickness;
+        double startOffset   = leftConnected  ? thickness / (2.0 * sinLeft)  : 0;
+        double endOffset     = rightConnected ? thickness / (2.0 * sinRight) : 0;
         double length = rawWallLengthMm(wall) * sf - startOffset - endOffset;
 
         // Bottom tabs connect the wall panel to the floor plate.
@@ -243,8 +267,9 @@ public final class LasercutExporter {
             bottomTabs = filterBottomTabsByCutouts(bottomTabs, cutouts);
         }
 
+        String label = "W" + index;
         return new WallPiece(length, heightAtStart, heightAtEnd, thickness,
-                bottomTabs, leftTabs, rightTabs, cutouts, "W" + index);
+                bottomTabs, leftTabs, rightTabs, cutouts, label, leftTabDepth, rightTabDepth);
     }
 
     /**
@@ -396,6 +421,122 @@ public final class LasercutExporter {
         double neighborH = neighborAtStart ? rawWallHeightMm(neighbor, home)
                                            : rawWallEndHeightMm(neighbor, home);
         return Math.min(selfH, neighborH) * sf;
+    }
+
+    /**
+     * Computes the angle (radians) between the two wall centerline directions at
+     * their shared junction.  Both direction vectors point AWAY from the junction
+     * along their respective walls.  Returns PI/2 for degenerate (zero-length)
+     * walls.  The sine of this angle drives the tab-depth correction for
+     * non-orthogonal corners.
+     */
+    private static double angleAtJunction(Wall self, boolean atStart, Wall neighbor) {
+        double sax = (self.getXEnd() - self.getXStart()) * CM_TO_MM;
+        double say = (self.getYEnd() - self.getYStart()) * CM_TO_MM;
+        double sLen = Math.hypot(sax, say);
+        if (sLen < 1e-10) return Math.PI / 2;
+        sax /= sLen; say /= sLen;
+        // If self is AT ITS START at the junction, self goes AWAY toward its end.
+        // If self is AT ITS END, reverse the direction.
+        if (!atStart) { sax = -sax; say = -say; }
+
+        double nbx = (neighbor.getXEnd() - neighbor.getXStart()) * CM_TO_MM;
+        double nby = (neighbor.getYEnd() - neighbor.getYStart()) * CM_TO_MM;
+        double nLen = Math.hypot(nbx, nby);
+        if (nLen < 1e-10) return Math.PI / 2;
+        nbx /= nLen; nby /= nLen;
+        // Determine which end of neighbor is at the junction and flip if needed.
+        boolean neighborAtStart = (neighbor.getWallAtStart() == self);
+        if (!neighborAtStart) { nbx = -nbx; nby = -nby; }
+
+        // Cross-product magnitude = |sin| of angle between the two outgoing directions.
+        double sinTheta = Math.abs(sax * nby - say * nbx);
+        // asin gives the angle; for obtuse angles use pi - asin.
+        double dot = sax * nbx + say * nby;
+        return dot >= 0 ? Math.asin(Math.min(1.0, sinTheta))
+                        : Math.PI - Math.asin(Math.min(1.0, sinTheta));
+    }
+
+    /**
+     * Third pass: detect pairs of walls whose centerlines geometrically intersect
+     * at a point that is NOT a shared formal endpoint.  These are cross (+)
+     * junctions where one continuous wall passes through another.
+     *
+     * <p>At a cross junction both panels need a half-depth slot so they can slide
+     * together in 3D assembly.  The primary wall (by identity hash order) gets a
+     * slot from the top of the panel down to mid-height; the secondary wall gets
+     * a slot from the bottom up to mid-height.
+     *
+     * <p>The intersection is computed from the raw (unscaled) wall centerlines;
+     * it must lie strictly interior to both walls (not within one material
+     * thickness of either endpoint) to be counted.
+     */
+    private void addCrossJunctionNotches(List<Wall> walls, Map<Wall, WallPiece> pieces) {
+        if (options.smoothConnections) return;
+        double sf = scaleFactor();
+        double t  = options.materialThickness;
+        int n = walls.size();
+
+        for (int i = 0; i < n - 1; i++) {
+            Wall wA = walls.get(i);
+            for (int j = i + 1; j < n; j++) {
+                Wall wB = walls.get(j);
+
+                // Skip pairs already connected at endpoints.
+                if (wA.getWallAtStart() == wB || wA.getWallAtEnd() == wB) continue;
+                if (wB.getWallAtStart() == wA || wB.getWallAtEnd() == wA) continue;
+
+                // Centerline vectors in scaled mm.
+                double axs = wA.getXStart() * CM_TO_MM * sf;
+                double ays = wA.getYStart() * CM_TO_MM * sf;
+                double axe = wA.getXEnd()   * CM_TO_MM * sf;
+                double aye = wA.getYEnd()   * CM_TO_MM * sf;
+                double bxs = wB.getXStart() * CM_TO_MM * sf;
+                double bys = wB.getYStart() * CM_TO_MM * sf;
+                double bxe = wB.getXEnd()   * CM_TO_MM * sf;
+                double bye = wB.getYEnd()   * CM_TO_MM * sf;
+
+                double dax = axe - axs, day = aye - ays;
+                double dbx = bxe - bxs, dby = bye - bys;
+                double denom = dax * dby - day * dbx;
+                if (Math.abs(denom) < SEAM_TOLERANCE) continue; // parallel
+
+                double tA = ((bxs - axs) * dby - (bys - ays) * dbx) / denom;
+                double tB = ((bxs - axs) * day - (bys - ays) * dax) / denom;
+
+                double aLen = Math.hypot(dax, day);
+                double bLen = Math.hypot(dbx, dby);
+                if (aLen < SEAM_TOLERANCE || bLen < SEAM_TOLERANCE) continue;
+
+                // Must be strictly interior (not within t of either endpoint).
+                double epA = t / aLen;
+                double epB = t / bLen;
+                if (tA <= epA || tA >= 1 - epA) continue;
+                if (tB <= epB || tB >= 1 - epB) continue;
+
+                WallPiece pieceA = pieces.get(wA);
+                WallPiece pieceB = pieces.get(wB);
+
+                // Panel-local x of the crossing on each piece.
+                double aStartOff = (pieceA.leftTabs != null) ? t / 2.0 : 0;
+                double bStartOff = (pieceB.leftTabs != null) ? t / 2.0 : 0;
+                double aX = tA * aLen - aStartOff;
+                double bX = tB * bLen - bStartOff;
+                double half = t / 2.0;
+
+                double aH = pieceA.height;
+                double bH = pieceB.height;
+
+                // Primary gets top-half slot (slides DOWN onto secondary).
+                if (isPrimary(wA, wB)) {
+                    pieceA.cutouts.add(new double[]{ aX - half, aH / 2.0, aX + half, aH });
+                    pieceB.cutouts.add(new double[]{ bX - half, 0,         bX + half, bH / 2.0 });
+                } else {
+                    pieceA.cutouts.add(new double[]{ aX - half, 0,         aX + half, aH / 2.0 });
+                    pieceB.cutouts.add(new double[]{ bX - half, bH / 2.0, bX + half, bH });
+                }
+            }
+        }
     }
 
     // ---- floor geometry ------------------------------------------------------
@@ -972,14 +1113,17 @@ public final class LasercutExporter {
      */
     private static final class BoardItem {
         final List<List<double[]>> shapes;
+        final List<List<double[]>> innerShapes;
         final List<List<double[]>> referenceShapes;
         final List<LayoutResult.Label> labels;
         final double width;
         final double height;
 
-        BoardItem(List<List<double[]>> shapes, List<List<double[]>> referenceShapes,
+        BoardItem(List<List<double[]>> shapes, List<List<double[]>> innerShapes,
+                  List<List<double[]>> referenceShapes,
                   List<LayoutResult.Label> labels, double width, double height) {
             this.shapes          = shapes;
+            this.innerShapes     = innerShapes;
             this.referenceShapes = referenceShapes;
             this.labels          = labels;
             this.width           = width;
@@ -1010,8 +1154,9 @@ public final class LasercutExporter {
 
             List<List<double[]>> shapes = new ArrayList<>();
             shapes.add(translated(tile.outline, offX, offY));
+            List<List<double[]>> tileInner = new ArrayList<>();
             for (double[][] slot : tile.slots) {
-                shapes.add(translated(asPolygon(slot), offX, offY));
+                tileInner.add(translated(asPolygon(slot), offX, offY));
             }
 
             List<List<double[]>> refShapes = new ArrayList<>();
@@ -1044,7 +1189,7 @@ public final class LasercutExporter {
                 }
             }
 
-            items.add(new BoardItem(shapes, refShapes, labels, w, h));
+            items.add(new BoardItem(shapes, tileInner, refShapes, labels, w, h));
         }
 
         // ---- walls -------------------------------------------------------
@@ -1057,19 +1202,20 @@ public final class LasercutExporter {
 
             List<List<double[]>> shapes = new ArrayList<>();
             shapes.add(translated(piece.outline(), offX, offY));
+            List<List<double[]>> wallInner = new ArrayList<>();
             for (double[] cut : piece.cutouts) {
                 List<double[]> rect = new ArrayList<>(4);
                 rect.add(new double[] { cut[0] + offX, cut[1] + offY });
                 rect.add(new double[] { cut[2] + offX, cut[1] + offY });
                 rect.add(new double[] { cut[2] + offX, cut[3] + offY });
                 rect.add(new double[] { cut[0] + offX, cut[3] + offY });
-                shapes.add(rect);
+                wallInner.add(rect);
             }
 
             List<LayoutResult.Label> labels = new ArrayList<>();
             labels.add(new LayoutResult.Label(piece.label, 2, 8, 6));
 
-            items.add(new BoardItem(shapes, Collections.emptyList(), labels, w, h));
+            items.add(new BoardItem(shapes, wallInner, Collections.emptyList(), labels, w, h));
         }
 
         return items;
@@ -1182,6 +1328,8 @@ public final class LasercutExporter {
                 double origW = item.width;
                 for (List<double[]> shape : item.shapes)
                     current.shapes.add(translated(rotated90(shape, origW), bestX, bestY));
+                for (List<double[]> shape : item.innerShapes)
+                    current.innerShapes.add(translated(rotated90(shape, origW), bestX, bestY));
                 for (List<double[]> shape : item.referenceShapes)
                     current.referenceShapes.add(translated(rotated90(shape, origW), bestX, bestY));
                 for (LayoutResult.Label lbl : item.labels)
@@ -1190,6 +1338,8 @@ public final class LasercutExporter {
             } else {
                 for (List<double[]> shape : item.shapes)
                     current.shapes.add(translated(shape, bestX, bestY));
+                for (List<double[]> shape : item.innerShapes)
+                    current.innerShapes.add(translated(shape, bestX, bestY));
                 for (List<double[]> shape : item.referenceShapes)
                     current.referenceShapes.add(translated(shape, bestX, bestY));
                 for (LayoutResult.Label lbl : item.labels)
@@ -1294,6 +1444,9 @@ public final class LasercutExporter {
             for (List<double[]> shape : board.shapes) {
                 result.shapes.add(translated(shape, itemOffX, itemOffY));
             }
+            for (List<double[]> shape : board.innerShapes) {
+                result.innerShapes.add(translated(shape, itemOffX, itemOffY));
+            }
             for (List<double[]> shape : board.referenceShapes) {
                 result.referenceShapes.add(translated(shape, itemOffX, itemOffY));
             }
@@ -1351,7 +1504,7 @@ public final class LasercutExporter {
 
                 result.shapes.add(translated(tile.outline, tOffX, tOffY));
                 for (double[][] slot : tile.slots) {
-                    result.shapes.add(translated(asPolygon(slot), tOffX, tOffY));
+                    result.innerShapes.add(translated(asPolygon(slot), tOffX, tOffY));
                 }
 
                 String floorLabel = numTiles > 1
@@ -1416,7 +1569,7 @@ public final class LasercutExporter {
                 rect.add(new double[] { cut[2] + offX, cut[1] + offY });
                 rect.add(new double[] { cut[2] + offX, cut[3] + offY });
                 rect.add(new double[] { cut[0] + offX, cut[3] + offY });
-                result.shapes.add(rect);
+                result.innerShapes.add(rect);
             }
             double pw = b[2] - b[0];
             double ph = b[3] - b[1];
@@ -1434,8 +1587,15 @@ public final class LasercutExporter {
         for (double[] r : layout.boardRects) {
             svg.addBoardOutline(r[0], r[1], r[2], r[3]);
         }
+        double kerf = options.kerfMm;
+        // Inner cuts first (slots, door/window openings) — shrink by kerf/2
+        for (List<double[]> shape : layout.innerShapes) {
+            svg.addPolygon(kerf > 0 ? offsetPolygon(shape, -kerf / 2.0) : shape, 0, 0);
+        }
+        // Outer profiles last — expand by kerf/2, apply bridge tabs
         for (List<double[]> shape : layout.shapes) {
-            svg.addPolygon(shape, 0, 0);
+            svg.addOuterPolygon(kerf > 0 ? offsetPolygon(shape, kerf / 2.0) : shape,
+                    0, 0, options.bridgeWidth, options.bridgesPerEdge);
         }
         for (List<double[]> shape : layout.referenceShapes) {
             svg.addReferencePath(shape, 0, 0);
@@ -1446,19 +1606,23 @@ public final class LasercutExporter {
         svg.write(outputFile);
     }
 
-    /**
-     * Write a single per-board SVG.  A board outline is drawn at (0,0) and
-     * items are inset by {@link ExportOptions#layoutSpacing}.
-     */
+    /** Write a single per-board SVG. Board outline at (0,0), items inset by spacing. */
     private void writeSvgBoard(File outputFile, LayoutResult boardLayout) throws IOException {
         double bw      = options.boardWidth;
         double bh      = options.boardHeight;
         double spacing = options.layoutSpacing;
+        double kerf    = options.kerfMm;
 
         SVGWriter svg = new SVGWriter(options.svgStrokeWidth, options.cutStrokeColor);
         svg.addBoardOutline(0, 0, bw, bh);
+        for (List<double[]> shape : boardLayout.innerShapes) {
+            List<double[]> s = kerf > 0 ? offsetPolygon(shape, -kerf / 2.0) : shape;
+            svg.addPolygon(translated(s, spacing, spacing), 0, 0);
+        }
         for (List<double[]> shape : boardLayout.shapes) {
-            svg.addPolygon(translated(shape, spacing, spacing), 0, 0);
+            List<double[]> s = kerf > 0 ? offsetPolygon(shape, kerf / 2.0) : shape;
+            svg.addOuterPolygon(translated(s, spacing, spacing), 0, 0,
+                    options.bridgeWidth, options.bridgesPerEdge);
         }
         for (List<double[]> shape : boardLayout.referenceShapes) {
             svg.addReferencePath(translated(shape, spacing, spacing), 0, 0);
@@ -1469,31 +1633,140 @@ public final class LasercutExporter {
         svg.write(outputFile);
     }
 
+    private void writeDxf(File outputFile, LayoutResult layout) throws IOException {
+        DXFWriter dxf = new DXFWriter();
+        for (double[] r : layout.boardRects) {
+            dxf.addBoardOutline(r[0], r[1], r[2], r[3]);
+        }
+        double kerf = options.kerfMm;
+        for (List<double[]> shape : layout.innerShapes) {
+            dxf.addPolygon(kerf > 0 ? offsetPolygon(shape, -kerf / 2.0) : shape, 0, 0);
+        }
+        for (List<double[]> shape : layout.shapes) {
+            dxf.addOuterPolygon(kerf > 0 ? offsetPolygon(shape, kerf / 2.0) : shape,
+                    0, 0, options.bridgeWidth, options.bridgesPerEdge);
+        }
+        for (List<double[]> shape : layout.referenceShapes) {
+            dxf.addReferencePath(shape, 0, 0);
+        }
+        dxf.write(outputFile);
+    }
+
+    private void writeDxfBoard(File outputFile, LayoutResult boardLayout) throws IOException {
+        double bw      = options.boardWidth;
+        double bh      = options.boardHeight;
+        double spacing = options.layoutSpacing;
+        double kerf    = options.kerfMm;
+
+        DXFWriter dxf = new DXFWriter();
+        dxf.addBoardOutline(0, 0, bw, bh);
+        for (List<double[]> shape : boardLayout.innerShapes) {
+            List<double[]> s = kerf > 0 ? offsetPolygon(shape, -kerf / 2.0) : shape;
+            dxf.addPolygon(translated(s, spacing, spacing), 0, 0);
+        }
+        for (List<double[]> shape : boardLayout.shapes) {
+            List<double[]> s = kerf > 0 ? offsetPolygon(shape, kerf / 2.0) : shape;
+            dxf.addOuterPolygon(translated(s, spacing, spacing), 0, 0,
+                    options.bridgeWidth, options.bridgesPerEdge);
+        }
+        for (List<double[]> shape : boardLayout.referenceShapes) {
+            dxf.addReferencePath(translated(shape, spacing, spacing), 0, 0);
+        }
+        dxf.write(outputFile);
+    }
+
     /**
-     * Write one SVG file per board.
+     * Write one file (SVG, DXF, or both) per board.
      *
      * <p>When there is more than one board the output filenames are
      * {@code <base>-board1.svg}, {@code <base>-board2.svg}, etc.
-     * When there is exactly one board the {@code baseFile} name is used as-is.
      *
      * @return list of files actually written (in board order)
      */
     private List<File> writeBoardFiles(File baseFile, List<LayoutResult> boards) throws IOException {
-        String name = baseFile.getName();
-        if (name.toLowerCase(Locale.ROOT).endsWith(".svg")) {
-            name = name.substring(0, name.length() - 4);
-        }
+        String name = stripExtension(baseFile.getName());
         File dir = baseFile.getParentFile();
         if (dir == null) dir = new File(".");
 
-        List<File> written = new ArrayList<>(boards.size());
+        ExportOptions.ExportFormat fmt = options.exportFormat;
+        List<File> written = new ArrayList<>();
         for (int i = 0; i < boards.size(); i++) {
             String suffix = boards.size() > 1 ? "-board" + (i + 1) : "";
-            File boardFile = new File(dir, name + suffix + ".svg");
-            writeSvgBoard(boardFile, boards.get(i));
-            written.add(boardFile);
+            if (fmt != ExportOptions.ExportFormat.DXF) {
+                File f = new File(dir, name + suffix + ".svg");
+                writeSvgBoard(f, boards.get(i));
+                written.add(f);
+            }
+            if (fmt != ExportOptions.ExportFormat.SVG) {
+                File f = new File(dir, name + suffix + ".dxf");
+                writeDxfBoard(f, boards.get(i));
+                written.add(f);
+            }
         }
         return written;
+    }
+
+    private static String stripExtension(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".svg") || lower.endsWith(".dxf")) {
+            return name.substring(0, name.length() - 4);
+        }
+        return name;
+    }
+
+    /**
+     * Offset a polygon outward (d > 0) or inward (d < 0) by {@code d} mm.
+     *
+     * <p>Each edge is shifted by {@code d} along its outward normal; adjacent
+     * offset edges are then intersected to produce the new vertex positions.
+     * This correctly handles both convex (tab tips expand outward) and concave
+     * (slot roots widen) corners.
+     *
+     * <p>Our polygons are traced clockwise in screen/SVG space (y-down), so the
+     * outward normal of each edge is its 90° CCW (left) rotation.
+     */
+    private static List<double[]> offsetPolygon(List<double[]> pts, double d) {
+        int n = pts.size();
+        if (n < 3 || Math.abs(d) < 1e-9) return pts;
+
+        // Compute offset edges: each edge moved d in the outward-normal direction.
+        // Left normal of (ex, ey) = (-ey, ex) — outward for our CW polygons.
+        double[][] os = new double[n][2]; // offset-edge start
+        double[][] oe = new double[n][2]; // offset-edge end
+        for (int i = 0; i < n; i++) {
+            double[] p0 = pts.get(i);
+            double[] p1 = pts.get((i + 1) % n);
+            double ex = p1[0] - p0[0], ey = p1[1] - p0[1];
+            double len = Math.hypot(ex, ey);
+            if (len < 1e-9) {
+                os[i][0] = p0[0]; os[i][1] = p0[1];
+                oe[i][0] = p1[0]; oe[i][1] = p1[1];
+            } else {
+                double nx = -ey / len * d, ny = ex / len * d;
+                os[i][0] = p0[0] + nx; os[i][1] = p0[1] + ny;
+                oe[i][0] = p1[0] + nx; oe[i][1] = p1[1] + ny;
+            }
+        }
+
+        // New vertex i = intersection of offset edge (i-1) with offset edge i.
+        List<double[]> result = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            int prev = (i - 1 + n) % n;
+            double[] p = lineIntersect(os[prev], oe[prev], os[i], oe[i]);
+            result.add(p != null ? p : os[i].clone());
+        }
+        return result;
+    }
+
+    /** Intersect the infinite lines through (a→b) and (c→d). Returns null if parallel. */
+    private static double[] lineIntersect(double[] a, double[] b, double[] c, double[] d) {
+        double d1x = b[0] - a[0], d1y = b[1] - a[1];
+        double d2x = d[0] - c[0], d2y = d[1] - c[1];
+        double denom = d1x * d2y - d1y * d2x;
+        if (Math.abs(denom) < 1e-9) return null;
+        double dx = c[0] - a[0], dy = c[1] - a[1];
+        double t = (dx * d2y - dy * d2x) / denom;
+        return new double[]{ a[0] + t * d1x, a[1] + t * d1y };
     }
 
     private static List<double[]> translated(List<double[]> pts, double dx, double dy) {

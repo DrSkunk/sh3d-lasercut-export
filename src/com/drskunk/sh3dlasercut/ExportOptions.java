@@ -22,6 +22,10 @@ public class ExportOptions {
          */
         COMPENSATE
     }
+
+    /** Output file format. */
+    public enum ExportFormat { SVG, DXF, BOTH }
+
     /**
      * Scale divisor: 1:N where N is this value. The model is shrunk by this
      * factor in the SVG. E.g. a 5 m wall at scaleDivisor=50 becomes 100 mm.
@@ -44,7 +48,7 @@ public class ExportOptions {
     public double layoutSpacing = 10.0;
 
     /**
-     * If true, no finger joints are generated anywhere — neither wall-to-wall
+     * If true, no finger joints are generated anywhere -- neither wall-to-wall
      * nor wall-to-floor.  Wall panels are plain rectangles (or trapezoids for
      * sloping walls) and the floor plate is a plain outline with no slots.
      * Pieces are intended to be assembled with glue or snap-fit rather than
@@ -55,12 +59,6 @@ public class ExportOptions {
     /**
      * Controls how connections involving sloping walls (walls whose height
      * differs at the two ends) are exported.
-     * <ul>
-     *   <li>{@link SlopingWallMode#SMOOTH} – no finger joints on any end
-     *       that belongs to, or touches, a sloping wall.</li>
-     *   <li>{@link SlopingWallMode#COMPENSATE} – finger joints are clipped
-     *       to the actual height at the junction; the panel is trapezoidal.</li>
-     * </ul>
      */
     public SlopingWallMode slopingWallMode = SlopingWallMode.COMPENSATE;
 
@@ -71,9 +69,7 @@ public class ExportOptions {
      */
     public double boardWidth = 0.0;
 
-    /**
-     * Physical height of the laser-cutting board in mm (0 = no constraint).
-     */
+    /** Physical height of the laser-cutting board in mm (0 = no constraint). */
     public double boardHeight = 0.0;
 
     /**
@@ -86,18 +82,36 @@ public class ExportOptions {
 
     /**
      * When true and both {@link #boardWidth} and {@link #boardHeight} are set,
-     * write one SVG file per board (named {@code <base>-board1.svg},
-     * {@code <base>-board2.svg}, …) instead of a single combined SVG that shows
-     * all boards with outline rectangles.
+     * write one SVG file per board instead of a single combined SVG.
      */
     public boolean separateFilesPerBoard = false;
 
     /** Stroke width of cut lines in the SVG, in mm (0 for hairline). */
     public double svgStrokeWidth = 0.1;
 
-    /**
-     * Stroke color used for cut lines. Defaults to red (#FF0000) — the
-     * convention most laser-cutter drivers expect for vector cuts.
-     */
+    /** Stroke color used for cut lines. Default red is the laser-driver convention. */
     public Color cutStrokeColor = Color.RED;
+
+    /**
+     * Laser kerf width in mm (0 = disabled).  Half the kerf is applied per side:
+     * outer profiles expand by kerfMm/2, inner cuts shrink by kerfMm/2, so
+     * physical pieces match the designed dimensions.
+     */
+    public double kerfMm = 0.0;
+
+    /**
+     * Width of holding bridges inserted in outer cut profiles, in mm.
+     * Zero disables bridges.  Bridges keep pieces inside the sheet until
+     * the operator snaps them out -- useful to prevent pieces falling through
+     * the laser bed mid-job.  Edges shorter than 3x bridgeWidth are not bridged.
+     */
+    public double bridgeWidth = 0.0;
+
+    /**
+     * Number of bridges per long edge.  Only used when {@link #bridgeWidth} > 0.
+     */
+    public int bridgesPerEdge = 2;
+
+    /** Which file format(s) to write. */
+    public ExportFormat exportFormat = ExportFormat.SVG;
 }
