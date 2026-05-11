@@ -73,6 +73,65 @@ public final class ExportOptionsPanel {
                 defaults.exportFormat == ExportOptions.ExportFormat.DXF  ? 1 :
                 defaults.exportFormat == ExportOptions.ExportFormat.BOTH ? 2 : 0);
 
+        // Tooltips — shown on hover for every interactive control.
+        scaleField.setToolTipText(
+                "<html>Divide model dimensions by N to get sheet dimensions.<br>"
+                + "A 5 m wall at 1:50 becomes 100 mm. Does not affect<br>"
+                + "thickness, finger width, margins, or spacing.</html>");
+        thicknessField.setToolTipText(
+                "<html>Physical thickness of your sheet material in mm.<br>"
+                + "Used for finger depth, slot width, and panel insets.<br>"
+                + "All wall thicknesses in the model are ignored.</html>");
+        tabWidthField.setToolTipText(
+                "<html>Target width of each box-joint finger or slot in mm.<br>"
+                + "Rounded so an odd number of equal fingers fits each edge<br>"
+                + "(a finger at each end with slots between).</html>");
+        marginField.setToolTipText(
+                "Extra clear space added around the wall footprints on all sides of the floor outline (mm).");
+        spacingField.setToolTipText(
+                "<html>Minimum gap between pieces in the layout (mm).<br>"
+                + "Also the inset from the board edge to the nearest piece<br>"
+                + "when board dimensions are set.</html>");
+        strokeField.setToolTipText(
+                "<html>Width of cut lines in the SVG file (mm).<br>"
+                + "Use 0 or 0.1 for a hairline vector cut.<br>"
+                + "Has no effect on DXF output.</html>");
+        kerfField.setToolTipText(
+                "<html>Width of material the laser removes in one pass (mm).<br>"
+                + "Outer profiles expand by kerf/2; inner cuts shrink by kerf/2<br>"
+                + "so finished pieces match designed dimensions.<br>"
+                + "Typical values: 0.1–0.5 mm. Set to 0 to disable.</html>");
+        bridgeField.setToolTipText(
+                "<html>Length of each uncut tab left in outer profiles (mm).<br>"
+                + "Keeps pieces attached to the sheet during cutting.<br>"
+                + "Snap them out and file smooth after the job.<br>"
+                + "A value of 3–5 mm works for most materials. Set to 0 to disable.</html>");
+        bridgesPerField.setToolTipText(
+                "<html>Number of bridges inserted on each long edge.<br>"
+                + "Edges shorter than 3× bridge width are not bridged.<br>"
+                + "More bridges = stronger hold, more cleanup.</html>");
+        smoothBox.setToolTipText(
+                "<html>Suppress all box-joint tabs. Walls have plain straight edges;<br>"
+                + "the floor plate has no slots. Use when joints will be glued or trimmed.</html>");
+        slopingBox.setToolTipText(
+                "<html><b>Compensate</b>: clip tab height to the shorter wall at each sloping junction<br>"
+                + "so tabs always fit within both panels.<br>"
+                + "<b>Smooth</b>: suppress tabs entirely on sloping ends — use glue or trim.</html>");
+        formatBox.setToolTipText(
+                "<html><b>SVG</b>: vector file readable by most laser-driver software.<br>"
+                + "<b>DXF</b>: AutoCAD R2000 format with CUT / REF / BOARD layers.<br>"
+                + "<b>SVG + DXF</b>: writes both files side by side.</html>");
+        boardWidthField.setToolTipText(
+                "Width of your laser-cutting bed or material sheet in mm. Enter 0 for no limit.");
+        boardHeightField.setToolTipText(
+                "Height of your laser-cutting bed or material sheet in mm. Enter 0 for no limit.");
+        splitFloorBox.setToolTipText(
+                "<html>When the floor plate is larger than the board, split it into<br>"
+                + "interlocking tiles with dovetail puzzle tabs at the seams.<br>"
+                + "Only available when board dimensions are set.</html>");
+        separateFilesBox.setToolTipText(
+                "Write a separate SVG/DXF file for each board instead of one combined file.");
+
         final Color[] colorHolder = { defaults.cutStrokeColor != null ? defaults.cutStrokeColor : Color.RED };
         final JButton colorButton = new JButton();
         colorButton.setPreferredSize(new Dimension(80, 22));
@@ -165,8 +224,8 @@ public final class ExportOptionsPanel {
 
         // ---- Section 1: Scale & Material ------------------------------------
         JPanel scalePanel = makeSection("Scale & Material");
-        addRow(scalePanel, c, 0, "Scale (1:N):", scaleField);
-        addRow(scalePanel, c, 1, "Material thickness (mm):", thicknessField);
+        addRow(scalePanel, c, 0, "Scale 1:N:", scaleField);
+        addRow(scalePanel, c, 1, "Sheet thickness (mm):", thicknessField);
         addRow(scalePanel, c, 2, "Finger width (mm):", tabWidthField);
 
         // ---- Section 2: Connections -----------------------------------------
@@ -182,8 +241,8 @@ public final class ExportOptionsPanel {
         JPanel layoutPanel = makeSection("Layout & Output");
         addRow(layoutPanel, c, 0, "Floor margin (mm):", marginField);
         addRow(layoutPanel, c, 1, "Layout spacing (mm):", spacingField);
-        addRow(layoutPanel, c, 2, "SVG stroke width (mm):", strokeField);
-        addRow(layoutPanel, c, 3, "Cut color:", colorButton);
+        addRow(layoutPanel, c, 2, "SVG line width (mm):", strokeField);
+        addRow(layoutPanel, c, 3, "Cut line color:", colorButton);
         addRow(layoutPanel, c, 4, "Export format:", formatBox);
 
         // ---- Section 4: Cut Quality -----------------------------------------
