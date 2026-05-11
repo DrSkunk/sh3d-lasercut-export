@@ -95,7 +95,8 @@ public final class ExportOptionsPanel {
                         boardWidthField, boardHeightField, splitFloorBox, separateFilesBox,
                         formatBox);
                 LayoutResult layout = new LasercutExporter(home, tentative).buildLayout();
-                preview.setLayout(layout, tentative.cutStrokeColor);
+                preview.setLayout(layout, tentative.cutStrokeColor,
+                        tentative.bridgeWidth, tentative.bridgesPerEdge);
                 if (layout.boardWarning != null) {
                     previewLabel.setForeground(WARNING_COLOR);
                     previewLabel.setText("[!] " + layout.boardWarning);

@@ -27,6 +27,8 @@ public final class PreviewPanel extends JComponent {
     private LayoutResult layout;
     private Color strokeColor = Color.RED;
     private String emptyMessage = "(no walls)";
+    private double bridgeWidth = 0;
+    private int bridgesPerEdge = 2;
 
     public PreviewPanel() {
         setPreferredSize(new Dimension(400, 460));
@@ -35,9 +37,12 @@ public final class PreviewPanel extends JComponent {
         setBorder(BorderFactory.createLineBorder(new Color(0xAAAAAA)));
     }
 
-    public void setLayout(LayoutResult layout, Color strokeColor) {
+    public void setLayout(LayoutResult layout, Color strokeColor,
+                          double bridgeWidth, int bridgesPerEdge) {
         this.layout = layout;
         this.strokeColor = strokeColor != null ? strokeColor : Color.RED;
+        this.bridgeWidth = bridgeWidth;
+        this.bridgesPerEdge = bridgesPerEdge;
         repaint();
     }
 
@@ -55,15 +60,24 @@ public final class PreviewPanel extends JComponent {
             g2.setColor(getBackground());
             g2.fillRect(0, 0, getWidth(), getHeight());
 
-            if (layout == null || layout.shapes.isEmpty()) {
+            boolean hasShapes = !layout.shapes.isEmpty() || !layout.innerShapes.isEmpty();
+            if (layout == null || !hasShapes) {
                 drawCentered(g2, emptyMessage, EMPTY_TEXT);
                 return;
             }
 
-            // Determine layout bounds from shapes AND board rects.
+            // Determine layout bounds from all cut shapes AND board rects.
             double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY;
             double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY;
             for (List<double[]> shape : layout.shapes) {
+                for (double[] p : shape) {
+                    if (p[0] < minX) minX = p[0];
+                    if (p[1] < minY) minY = p[1];
+                    if (p[0] > maxX) maxX = p[0];
+                    if (p[1] > maxY) maxY = p[1];
+                }
+            }
+            for (List<double[]> shape : layout.innerShapes) {
                 for (double[] p : shape) {
                     if (p[0] < minX) minX = p[0];
                     if (p[1] < minY) minY = p[1];
@@ -113,21 +127,47 @@ public final class PreviewPanel extends JComponent {
             // Cut paths in the chosen stroke color.
             g2.setColor(strokeColor);
             g2.setStroke(new BasicStroke(1.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            for (List<double[]> shape : layout.shapes) {
+
+            // Inner cuts (slots, door/window openings) — closed paths.
+            for (List<double[]> shape : layout.innerShapes) {
                 Path2D.Double path = new Path2D.Double();
                 boolean first = true;
                 for (double[] p : shape) {
                     double x = p[0] * scale + offX;
                     double y = p[1] * scale + offY;
-                    if (first) {
-                        path.moveTo(x, y);
-                        first = false;
-                    } else {
-                        path.lineTo(x, y);
-                    }
+                    if (first) { path.moveTo(x, y); first = false; }
+                    else        { path.lineTo(x, y); }
                 }
                 path.closePath();
                 g2.draw(path);
+            }
+
+            // Outer profiles — split at bridge gaps when bridges are configured.
+            for (List<double[]> shape : layout.shapes) {
+                if (bridgeWidth > 0 && bridgesPerEdge > 0) {
+                    java.util.List<java.util.List<double[]>> segs =
+                            DXFWriter.splitBridges(shape, 0, 0, bridgeWidth, bridgesPerEdge);
+                    for (java.util.List<double[]> seg : segs) {
+                        if (seg.size() < 2) continue;
+                        Path2D.Double path = new Path2D.Double();
+                        path.moveTo(seg.get(0)[0] * scale + offX, seg.get(0)[1] * scale + offY);
+                        for (int i = 1; i < seg.size(); i++) {
+                            path.lineTo(seg.get(i)[0] * scale + offX, seg.get(i)[1] * scale + offY);
+                        }
+                        g2.draw(path);
+                    }
+                } else {
+                    Path2D.Double path = new Path2D.Double();
+                    boolean first = true;
+                    for (double[] p : shape) {
+                        double x = p[0] * scale + offX;
+                        double y = p[1] * scale + offY;
+                        if (first) { path.moveTo(x, y); first = false; }
+                        else        { path.lineTo(x, y); }
+                    }
+                    path.closePath();
+                    g2.draw(path);
+                }
             }
 
             // Wall placement guides in the same gray as labels.
@@ -158,12 +198,14 @@ public final class PreviewPanel extends JComponent {
                 int n = layout.boardRects.size();
                 double boardW = layout.boardRects.get(0)[2];
                 double boardH = layout.boardRects.get(0)[3];
+                int total = layout.shapes.size() + layout.innerShapes.size();
                 text = String.format(Locale.US,
                         "%d board%s \u00b7 %.0f \u00d7 %.0f mm each   (%d shapes)",
-                        n, n == 1 ? "" : "s", boardW, boardH, layout.shapes.size());
+                        n, n == 1 ? "" : "s", boardW, boardH, total);
             } else {
+                int total = layout.shapes.size() + layout.innerShapes.size();
                 text = String.format(Locale.US,
-                        "%.0f \u00d7 %.0f mm   (%d shapes)", bw, bh, layout.shapes.size());
+                        "%.0f \u00d7 %.0f mm   (%d shapes)", bw, bh, total);
             }
             g2.drawString(text, PADDING, getHeight() - PADDING / 2);
         } finally {
