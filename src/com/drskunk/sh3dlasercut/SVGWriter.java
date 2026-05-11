@@ -49,7 +49,7 @@ public final class SVGWriter {
         return new Color(Integer.parseInt(s, 16));
     }
 
-    /** Emit a closed polygon path. {@code points} is a list of {x, y} pairs. */
+    /** Emit a closed polygon cut path. {@code points} is a list of {x, y} pairs. */
     public void addPolygon(List<double[]> points, double offsetX, double offsetY) {
         if (points.isEmpty()) return;
         StringBuilder d = new StringBuilder();
@@ -63,6 +63,33 @@ public final class SVGWriter {
         }
         d.append(" Z");
         bodyElements.add("<path d=\"" + d + "\" />");
+    }
+
+    /**
+     * Emit an outer profile polygon, optionally with bridge gaps.
+     * When {@code bridgeWidth > 0} the path is broken into open sub-paths
+     * (multiple M commands) leaving small uncut sections on longer edges.
+     */
+    public void addOuterPolygon(List<double[]> points, double offsetX, double offsetY,
+                                 double bridgeWidth, int bridgesPerEdge) {
+        if (points.isEmpty()) return;
+        if (bridgeWidth <= 0 || bridgesPerEdge <= 0) {
+            addPolygon(points, offsetX, offsetY);
+            return;
+        }
+        List<List<double[]>> segs = DXFWriter.splitBridges(points, offsetX, offsetY,
+                bridgeWidth, bridgesPerEdge);
+        StringBuilder d = new StringBuilder();
+        for (List<double[]> seg : segs) {
+            if (seg.size() < 2) continue;
+            for (int i = 0; i < seg.size(); i++) {
+                double x = seg.get(i)[0], y = seg.get(i)[1];
+                d.append(i == 0 ? (d.length() == 0 ? "M " : " M ") : " L ");
+                d.append(fmt(x)).append(' ').append(fmt(y));
+                updateBounds(x, y);
+            }
+        }
+        if (d.length() > 0) bodyElements.add("<path d=\"" + d + "\" />");
     }
 
     /** Emit a closed polygon from an array of points (each {x, y}). */

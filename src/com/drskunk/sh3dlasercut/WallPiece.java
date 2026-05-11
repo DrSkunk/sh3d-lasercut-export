@@ -13,7 +13,10 @@ import java.util.List;
  * For sloping walls {@code heightAtEnd} differs from {@code height} and the
  * top edge is diagonal (trapezoid).
  * Tabs on the bottom edge protrude DOWN past y=0 by {@code thickness}.
- * Tabs on side edges protrude OUTWARD past x=0 / x=length by {@code thickness}.
+ * Tabs on side edges protrude OUTWARD past x=0 / x=length by the per-edge
+ * tab depth ({@code leftTabDepth} / {@code rightTabDepth}).  For 90-degree
+ * corners these equal {@code thickness}.  For other angles the tab depth is
+ * scaled by 1/sin(theta) so the tab fully crosses the mating panel.
  */
 public final class WallPiece {
     public final double length;
@@ -35,12 +38,19 @@ public final class WallPiece {
     public final List<double[]> cutouts;
     public final String label;
 
+    /** Tab protrusion depth on the left (start) edge. Equals thickness for 90-degree corners. */
+    public final double leftTabDepth;
+    /** Tab protrusion depth on the right (end) edge. Equals thickness for 90-degree corners. */
+    public final double rightTabDepth;
+
     public WallPiece(double length, double height, double heightAtEnd, double thickness,
                      List<TabPattern.Span> bottomTabs,
                      List<TabPattern.Span> leftTabs,
                      List<TabPattern.Span> rightTabs,
                      List<double[]> cutouts,
-                     String label) {
+                     String label,
+                     double leftTabDepth,
+                     double rightTabDepth) {
         this.length = length;
         this.height = height;
         this.heightAtEnd = heightAtEnd;
@@ -50,12 +60,14 @@ public final class WallPiece {
         this.rightTabs = rightTabs;
         this.cutouts = cutouts != null ? cutouts : new ArrayList<>();
         this.label = label;
+        this.leftTabDepth  = leftTabDepth;
+        this.rightTabDepth = rightTabDepth;
     }
 
     /** Bounding box including tab protrusions. */
     public double[] bounds() {
-        double minX = (leftTabs != null) ? -thickness : 0;
-        double maxX = length + (rightTabs != null ? thickness : 0);
+        double minX = (leftTabs  != null) ? -leftTabDepth  : 0;
+        double maxX = length + (rightTabs != null ? rightTabDepth : 0);
         double minY = -thickness; // bottom tabs always present
         double maxY = Math.max(height, heightAtEnd);
         return new double[] { minX, minY, maxX, maxY };
@@ -66,11 +78,6 @@ public final class WallPiece {
      * bottom-left -> up the left edge -> across the top (diagonal for sloping
      * walls) -> down the right edge -> back across the bottom (with downward
      * tabs) -> close.
-     *
-     * <p>For sloping walls the top edge runs from {@code (0, height)} to
-     * {@code (length, heightAtEnd)}.  Side-edge tabs are generated up to the
-     * correct height for each edge ({@code height} on the left, {@code
-     * heightAtEnd} on the right).</p>
      */
     public List<double[]> outline() {
         List<double[]> pts = new ArrayList<>();
@@ -82,14 +89,14 @@ public final class WallPiece {
         if (leftTabs == null) {
             pts.add(new double[] { 0, height });
         } else {
-            // Tabs protrude to the left (negative x), height-direction polarity.
+            double d = leftTabDepth;
             double cursorY = 0;
             for (TabPattern.Span span : leftTabs) {
                 if (span.start > cursorY) {
                     pts.add(new double[] { 0, span.start });
                 }
-                pts.add(new double[] { -thickness, span.start });
-                pts.add(new double[] { -thickness, span.end });
+                pts.add(new double[] { -d, span.start });
+                pts.add(new double[] { -d, span.end });
                 pts.add(new double[] { 0, span.end });
                 cursorY = span.end;
             }
@@ -105,15 +112,15 @@ public final class WallPiece {
         if (rightTabs == null) {
             pts.add(new double[] { length, 0 });
         } else {
+            double d = rightTabDepth;
             double cursorY = heightAtEnd;
-            // Walk tabs in reverse (top to bottom).
             for (int i = rightTabs.size() - 1; i >= 0; i--) {
                 TabPattern.Span span = rightTabs.get(i);
                 if (span.end < cursorY) {
                     pts.add(new double[] { length, span.end });
                 }
-                pts.add(new double[] { length + thickness, span.end });
-                pts.add(new double[] { length + thickness, span.start });
+                pts.add(new double[] { length + d, span.end });
+                pts.add(new double[] { length + d, span.start });
                 pts.add(new double[] { length, span.start });
                 cursorY = span.start;
             }

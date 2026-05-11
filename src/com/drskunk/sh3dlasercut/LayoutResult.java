@@ -11,8 +11,14 @@ import java.util.List;
  * Coordinates are millimeters of the output sheet (already scale-divided).
  */
 public final class LayoutResult {
-    /** Each shape is a closed polygon, ordered list of {x, y}. */
+    /** Outer cut paths (piece profiles). Emitted after innerShapes in the file. */
     public final List<List<double[]>> shapes = new ArrayList<>();
+    /**
+     * Inner cut paths (floor slots, door/window openings).  Laser drivers
+     * should cut these before the outer profiles so panels don't shift after
+     * their boundary is freed.  Emitted first in SVG/DXF output.
+     */
+    public final List<List<double[]>> innerShapes = new ArrayList<>();
     /** Gray reference outlines (wall footprints on the floor), same color as labels. */
     public final List<List<double[]>> referenceShapes = new ArrayList<>();
     /** Cosmetic labels (engraved or text annotations). */
