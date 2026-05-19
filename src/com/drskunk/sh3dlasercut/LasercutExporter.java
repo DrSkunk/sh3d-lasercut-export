@@ -674,7 +674,13 @@ public final class LasercutExporter {
         boolean tooWide = bw > 0 && floorW > usableW + SEAM_TOLERANCE;
         boolean tooTall = bh > 0 && floorH > usableH + SEAM_TOLERANCE;
 
-        if (!tooWide && !tooTall) {
+        // With both board dimensions set, a single unsplit floor tile can still
+        // fit if rotated 90°. Splitting is only necessary when neither orientation fits.
+        boolean fitsRotatedSingleTile = constrained
+            && floorW <= usableH + SEAM_TOLERANCE
+            && floorH <= usableW + SEAM_TOLERANCE;
+
+        if ((!tooWide && !tooTall) || fitsRotatedSingleTile) {
             gridSize[0] = 1; gridSize[1] = 1;
             return Collections.singletonList(
                     new FloorPiece(buildRectOutline(minX, minY, maxX, maxY), allSlots));
@@ -690,13 +696,74 @@ public final class LasercutExporter {
                     new FloorPiece(buildRectOutline(minX, minY, maxX, maxY), allSlots));
         }
 
+        // Choose split orientation (normal board axes vs swapped axes).
+        // Preference order:
+        // 1) Prefer a single-axis split over a two-axis grid.
+        // 2) If both are single-axis, prefer splitting along the longer floor side.
+        // 3) Otherwise, prefer the orientation that yields fewer tiles.
+        double splitUsableW = usableW;
+        double splitUsableH = usableH;
+        if (constrained) {
+            boolean normalTooWide = floorW > usableW + SEAM_TOLERANCE;
+            boolean normalTooTall = floorH > usableH + SEAM_TOLERANCE;
+            boolean swappedTooWide = floorW > usableH + SEAM_TOLERANCE;
+            boolean swappedTooTall = floorH > usableW + SEAM_TOLERANCE;
+
+            int normalAxes = (normalTooWide ? 1 : 0) + (normalTooTall ? 1 : 0);
+            int swappedAxes = (swappedTooWide ? 1 : 0) + (swappedTooTall ? 1 : 0);
+
+            boolean useSwapped = false;
+            if (swappedAxes < normalAxes) {
+                useSwapped = true;
+            } else if (swappedAxes == normalAxes && normalAxes == 1) {
+                boolean preferWidthSplit = floorW >= floorH;
+                boolean normalSplitsWidth = normalTooWide;
+                boolean swappedSplitsWidth = swappedTooWide;
+                if (normalSplitsWidth != swappedSplitsWidth) {
+                    useSwapped = swappedSplitsWidth == preferWidthSplit;
+                }
+            } else if (swappedAxes == normalAxes && normalAxes >= 1) {
+                double normalIntervalX = normalTooWide ? Math.max(1, usableW - tabDepth) : 0;
+                double normalIntervalY = normalTooTall ? Math.max(1, usableH - tabDepth) : 0;
+                double swappedIntervalX = swappedTooWide ? Math.max(1, usableH - tabDepth) : 0;
+                double swappedIntervalY = swappedTooTall ? Math.max(1, usableW - tabDepth) : 0;
+
+                int normalCols = normalTooWide
+                        ? buildSeamCoords(0, floorW, normalIntervalX).size() - 1
+                        : 1;
+                int normalRows = normalTooTall
+                        ? buildSeamCoords(0, floorH, normalIntervalY).size() - 1
+                        : 1;
+                int swappedCols = swappedTooWide
+                        ? buildSeamCoords(0, floorW, swappedIntervalX).size() - 1
+                        : 1;
+                int swappedRows = swappedTooTall
+                        ? buildSeamCoords(0, floorH, swappedIntervalY).size() - 1
+                        : 1;
+
+                int normalTiles = normalCols * normalRows;
+                int swappedTiles = swappedCols * swappedRows;
+                if (swappedTiles < normalTiles) {
+                    useSwapped = true;
+                }
+            }
+
+            if (useSwapped) {
+                splitUsableW = usableH;
+                splitUsableH = usableW;
+            }
+        }
+
+        tooWide = bw > 0 && floorW > splitUsableW + SEAM_TOLERANCE;
+        tooTall = bh > 0 && floorH > splitUsableH + SEAM_TOLERANCE;
+
         // Split into a grid of tiles with interlocking puzzle-joint seams.
         // When constrained, each non-last tile has a puzzle-joint tab that protrudes
         // tabDepth beyond the seam line.  To keep the tile's bounding box within the
         // usable area, the seam interval is reduced by tabDepth so that
         // (seam interval) + tabDepth = usableW/H.
-        double xInterval = tooWide ? (constrained ? Math.max(1, usableW - tabDepth) : bw) : 0;
-        double yInterval = tooTall ? (constrained ? Math.max(1, usableH - tabDepth) : bh) : 0;
+        double xInterval = tooWide ? (constrained ? Math.max(1, splitUsableW - tabDepth) : bw) : 0;
+        double yInterval = tooTall ? (constrained ? Math.max(1, splitUsableH - tabDepth) : bh) : 0;
         List<Double> xCoords = buildSeamCoords(minX, maxX, xInterval);
         List<Double> yCoords = buildSeamCoords(minY, maxY, yInterval);
         int numCols = xCoords.size() - 1;
