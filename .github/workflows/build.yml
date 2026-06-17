@@ -44,6 +44,17 @@ jobs:
           mkdir -p lib
           curl -fL "${SH3D_JAR_URL}" -o lib/SweetHome3D.jar
 
+      - name: Download JUnit test dependencies
+        run: |
+          mkdir -p test-lib
+          curl -fL -o test-lib/junit-4.13.2.jar \
+            https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar
+          curl -fL -o test-lib/hamcrest-core-1.3.jar \
+            https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar
+
+      - name: Run unit tests
+        run: ant -Dsh3d.jar=lib/SweetHome3D.jar test
+
       - name: Build plugin
         run: ant -Dsh3d.jar=lib/SweetHome3D.jar package
 

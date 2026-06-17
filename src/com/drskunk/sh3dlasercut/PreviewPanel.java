@@ -60,8 +60,12 @@ public final class PreviewPanel extends JComponent {
             g2.setColor(getBackground());
             g2.fillRect(0, 0, getWidth(), getHeight());
 
+            if (layout == null) {
+                drawCentered(g2, emptyMessage, EMPTY_TEXT);
+                return;
+            }
             boolean hasShapes = !layout.shapes.isEmpty() || !layout.innerShapes.isEmpty();
-            if (layout == null || !hasShapes) {
+            if (!hasShapes) {
                 drawCentered(g2, emptyMessage, EMPTY_TEXT);
                 return;
             }

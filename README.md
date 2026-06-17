@@ -211,6 +211,7 @@ You need a JDK (8 or newer) and Apache Ant (or use the bundled `Makefile`).
 
 | Target              | Description |
 |---------------------|-------------|
+| `make test`         | Run the JUnit unit-test suite (auto-downloads JUnit into `test-lib/`). |
 | `make clean`        | Remove `build/` and `dist/`. |
 | `make install`      | Build (if needed) and copy the `.sh3p` into your local Sweet Home 3D plugins folder (path auto-detected per OS). |
 | `make reinstall`    | Shorthand for `make clean install`. |

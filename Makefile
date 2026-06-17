@@ -2,6 +2,7 @@
 #
 # Usage:
 #   make              # build dist/LasercutExport.sh3p
+#   make test         # run the JUnit test suite (downloads JUnit if needed)
 #   make clean        # remove build/ and dist/
 #   make install      # copy .sh3p into the local Sweet Home 3D plugins folder
 #   make reinstall    # clean + build + install
@@ -45,15 +46,30 @@ endif
 
 ANT ?= ant
 
+# JUnit / Hamcrest jars used by `make test` (auto-downloaded if missing).
+TEST_LIB    := test-lib
+JUNIT_JAR   := $(TEST_LIB)/junit-4.13.2.jar
+HAMCREST_JAR:= $(TEST_LIB)/hamcrest-core-1.3.jar
+JUNIT_URL   := https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar
+HAMCREST_URL:= https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar
+
 # --- Targets -----------------------------------------------------------------
 
-.PHONY: all package clean install reinstall run print-config \
+.PHONY: all package test test-deps clean install reinstall run print-config \
         bump-major bump-minor bump-patch _bump
 
 all: package
 
 package $(SH3P):
 	$(ANT) -Dsh3d.jar="$(SH3D_JAR)" package
+
+test-deps:
+	@mkdir -p $(TEST_LIB)
+	@[ -f "$(JUNIT_JAR)" ]    || curl -fL -o "$(JUNIT_JAR)"    "$(JUNIT_URL)"
+	@[ -f "$(HAMCREST_JAR)" ] || curl -fL -o "$(HAMCREST_JAR)" "$(HAMCREST_URL)"
+
+test: test-deps
+	$(ANT) -Dsh3d.jar="$(SH3D_JAR)" test
 
 clean:
 	$(ANT) clean

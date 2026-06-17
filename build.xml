@@ -7,10 +7,13 @@
          or drop the jar into the lib/ folder. -->
     <property name="sh3d.jar" location="lib/SweetHome3D.jar"/>
 
-    <property name="src.dir"     value="src"/>
-    <property name="build.dir"   value="build/classes"/>
-    <property name="dist.dir"    value="dist"/>
-    <property name="plugin.name" value="LasercutExport"/>
+    <property name="src.dir"        value="src"/>
+    <property name="build.dir"      value="build/classes"/>
+    <property name="test.src.dir"   value="test"/>
+    <property name="test.build.dir" value="build/test-classes"/>
+    <property name="test.lib.dir"   value="test-lib"/>
+    <property name="dist.dir"       value="dist"/>
+    <property name="plugin.name"    value="LasercutExport"/>
 
     <target name="-check-sdk">
         <available file="${sh3d.jar}" property="sh3d.jar.available"/>
@@ -51,5 +54,48 @@ On macOS the jar typically lives inside the app bundle, e.g.:
             <fileset dir="${src.dir}" includes="ApplicationPlugin.properties"/>
         </jar>
         <echo>Built ${dist.dir}/${plugin.name}.sh3p</echo>
+    </target>
+
+    <path id="test.classpath">
+        <pathelement location="${sh3d.jar}"/>
+        <pathelement location="${build.dir}"/>
+        <pathelement location="${test.build.dir}"/>
+        <fileset dir="${test.lib.dir}" includes="*.jar"/>
+    </path>
+
+    <target name="-check-test-libs">
+        <available file="${test.lib.dir}/junit-4.13.2.jar" property="junit.available"/>
+        <fail unless="junit.available">
+JUnit jars were not found in ${test.lib.dir}/.
+
+Download them once with:
+  mkdir -p test-lib
+  curl -fL -o test-lib/junit-4.13.2.jar \
+    https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar
+  curl -fL -o test-lib/hamcrest-core-1.3.jar \
+    https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar
+        </fail>
+    </target>
+
+    <target name="compile-tests" depends="compile,-check-test-libs">
+        <mkdir dir="${test.build.dir}"/>
+        <javac srcdir="${test.src.dir}"
+               destdir="${test.build.dir}"
+               source="1.8"
+               target="1.8"
+               encoding="UTF-8"
+               includeantruntime="false"
+               debug="true">
+            <classpath refid="test.classpath"/>
+        </javac>
+    </target>
+
+    <target name="test" depends="compile-tests"
+            description="Run the JUnit test suite">
+        <java classname="org.junit.runner.JUnitCore"
+              fork="true" failonerror="true">
+            <classpath refid="test.classpath"/>
+            <arg value="com.drskunk.sh3dlasercut.AllTests"/>
+        </java>
     </target>
 </project>
